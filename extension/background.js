@@ -21,6 +21,51 @@ function sendToTab(tabId, payload) {
   });
 }
 
+const OFFSCREEN_URL = "offscreen.html";
+let offscreenReady = null;
+
+async function ensureOffscreenDocument() {
+  if (offscreenReady) return offscreenReady;
+  offscreenReady = (async () => {
+    const existing = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+      documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+    });
+    if (existing.length > 0) return;
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_URL,
+      reasons: ["WORKERS"],
+      justification: "Face detection (canvas) and OCR (Web Workers) need DOM APIs the service worker doesn't have.",
+    });
+  })();
+  return offscreenReady;
+}
+
+async function captureActiveTab(tabId) {
+  const tab = await chrome.tabs.get(tabId);
+  // captureVisibleTab always captures whichever tab is currently active in
+  // the given window (it takes no tabId) — so the target tab must actually
+  // be active first, not just exist.
+  if (!tab.active) {
+    await chrome.tabs.update(tabId, { active: true });
+  }
+  return chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+}
+
+async function runVisionScan(tabId, { skipOcr = false } = {}) {
+  await ensureOffscreenDocument();
+  const imageDataUrl = await captureActiveTab(tabId);
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "RUN_VISION", imageDataUrl, skipOcr }, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
 async function runTask(tabId, task, maxSteps = MAX_STEPS) {
   const history = [];
   const steps = [];
@@ -38,18 +83,27 @@ async function runTask(tabId, task, maxSteps = MAX_STEPS) {
 
     let stepResp;
     try {
-      const res = await fetch(`${SERVER_BASE}/agent/step`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ state, history }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      let res;
+      try {
+        res = await fetch(`${SERVER_BASE}/agent/step`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ state, history }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
       if (!res.ok) {
         const text = await res.text();
         return { ok: false, error: `server ${res.status}: ${text}`, steps };
       }
       stepResp = await res.json();
     } catch (e) {
-      return { ok: false, error: `could not reach agent server: ${e.message}`, steps };
+      const reason = e.name === "AbortError" ? "agent server request timed out after 45s" : `could not reach agent server: ${e.message}`;
+      return { ok: false, error: reason, steps };
     }
 
     const action = stepResp.action;
@@ -95,7 +149,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "RUN_TASK" && message.tabId != null) {
-    runTask(message.tabId, message.task, message.maxSteps).then(sendResponse);
+    runTask(message.tabId, message.task, message.maxSteps)
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true; // async response
+  }
+
+  if (message?.type === "VISION_SCAN" && message.tabId != null) {
+    runVisionScan(message.tabId, { skipOcr: message.skipOcr })
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true; // async response
   }
 

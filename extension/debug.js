@@ -44,6 +44,21 @@ document.getElementById("execute-btn").addEventListener("click", async () => {
   document.getElementById("exec-result").textContent = JSON.stringify(response, null, 2);
 });
 
+document.getElementById("vision-scan-btn").addEventListener("click", async () => {
+  await refreshActiveTab();
+  if (activeTabId == null) return;
+  const skipOcr = document.getElementById("skip-ocr").checked;
+  const resultEl = document.getElementById("vision-result");
+  resultEl.textContent = "scanning...";
+  chrome.runtime.sendMessage({ type: "VISION_SCAN", tabId: activeTabId, skipOcr }, (response) => {
+    if (chrome.runtime.lastError) {
+      resultEl.textContent = "error: " + chrome.runtime.lastError.message;
+      return;
+    }
+    resultEl.textContent = JSON.stringify(response, null, 2);
+  });
+});
+
 document.getElementById("run-task-btn").addEventListener("click", async () => {
   await refreshActiveTab();
   if (activeTabId == null) return;

@@ -9,6 +9,7 @@ node_modules/
 eval/out/
 eval/network-payload.jsonl
 server/*.db
-models/
-*.onnx
-*.wasm
+
+# extension/models/ and extension/vendor/ ARE committed on purpose — they're
+# the bundled local inference models/runtime (BlazeFace, Tesseract.js) that
+# make on-device vision work with zero third-party network calls.

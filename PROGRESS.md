@@ -214,6 +214,102 @@ employee-portal fields and submits, 9 steps, 0 repairs, ~35–45s wall clock.
   changes made afterward (LLM-error retry) are covered by unit tests and don't touch the
   tokenize/detokenize/prompt logic Phase 3 actually validates.
 
-**Next:** Phase 4 — local vision (face detection + OCR on-device via WebGPU/WASM), the
-25%-weighted differentiator. Given today's Groq quota is exhausted, live agent-loop smoke tests
-for later phases should resume once the daily quota resets or a fresh key is provided.
+## Phase 4 — Local vision (face detection + OCR) ✅
+
+Pure client-side capability — no LLM/server involved at all, so unaffected by the Groq quota.
+
+- **Architecture: `chrome.offscreen` document**, not a content script or the service worker.
+  Face detection needs `<canvas>` (turn a screenshot data URL into pixels); OCR needs Web
+  Workers. Service workers have neither; content scripts run in an isolated JS world that can't
+  share globals with classic (non-module) vendor scripts the way a normal page can. An offscreen
+  document (`extension/offscreen.html` + `offscreen.js`) is the MV3-native answer: a real page,
+  part of the extension, with full DOM — created on demand by `background.js`
+  (`ensureOffscreenDocument()`, `reasons: ["WORKERS"]`), not at startup, so it costs nothing on
+  ordinary page loads.
+- **Face detection: BlazeFace on TensorFlow.js.** Chosen after actually comparing bundle sizes,
+  not just picking the first option in the brief: ONNX Runtime Web's WASM backend is 14–28MB per
+  variant; `@mediapipe/tasks-vision`'s generic multi-task WASM runtime is ~9MB; TFJS
+  core+wasm-backend+webgpu-backend+BlazeFace comes to **~1.4MB of runtime code**, and the actual
+  BlazeFace model weights (fetched from TF Hub once, now vendored locally) are only ~460KB. All
+  fetched from `chrome.runtime.getURL(...)` — zero third-party network calls at inference time.
+- **OCR: Tesseract.js**, LSTM-only core build (`tesseract-core-simd-lstm.wasm`, ~2.8MB) +
+  `eng.traineddata` from the `tessdata_fast` set (~4MB) — the "fast" variant specifically to keep
+  the bundle down; the full accuracy-tuned traineddata is 3–4x larger for a use case (reading
+  short in-image labels/badges) that doesn't need it.
+- Total bundled footprint: **~12.6MB** (`extension/vendor/` + `extension/models/`), committed to
+  the repo (not gitignored — `.gitignore`'s old blanket `models/`/`*.wasm` rules were from Phase
+  0, written before there was a real reason to bundle either; removed now that there is).
+- `extension/lib` untouched — vision is a separate pipeline from DOM extraction/PII, feeding
+  into the same `vision_regions` field the schema already reserved for it back in Phase 0.
+- New test fixtures: `test-pages/vision-test.html` with (a) a real face — a public-domain NASA
+  astronaut portrait via `images-api.nasa.gov`'s official-portraits collection (US government
+  work, unambiguous license, and an anonymous-enough subject that it's a clean test fixture
+  rather than a recognisable-public-figure concern) and (b) `assets/access-badge.png`, a PNG
+  with "Badge ID: MC-77219" rendered as pixels — deliberately NOT in the page's DOM, so the only
+  way to recover it is OCR over the actual screenshot.
+- `tools/smoke-phase4.mjs` asserts a real face is found with a plausible bbox, a real provider
+  name (`webgpu`/`wasm`) and positive latency are reported, and the OCR text genuinely contains
+  "77219"/"Badge" — not just that *some* output was produced.
+
+**Bugs found and fixed while getting this green** (each confirmed via targeted before/after
+tests, not assumed):
+- **BlazeFace's default `scoreThreshold` (0.75) rejects real, clearly-visible faces fairly
+  often** — the NASA portrait scored 0.66. Lowered to 0.5, which is still comfortably above
+  noise-level scores for non-faces. This is a genuine accuracy tuning finding, not a code bug.
+- **WebGPU backend returns silently WRONG (empty) BlazeFace predictions** in a
+  software-rendered environment (headless Chromium + swiftshader, no real GPU) — no error, just
+  zero detections where WASM correctly finds the same face at the same confidence. Since this
+  can't be distinguished at runtime from "genuinely no face in frame," WebGPU is now gated behind
+  `globalThis.__PVA_ENABLE_WEBGPU__` (off by default) and WASM is the verified-correct path. A
+  real GPU may make WebGPU worth re-enabling — untested here since this environment has none.
+- **`tf.wasm`'s multithread auto-detection hangs forever, silently, against a non-threaded
+  binary.** Only one WASM variant is bundled (non-threaded SIMD, to avoid requiring
+  cross-origin-isolation headers just for a threaded build); the auto-detector otherwise tries
+  to spin up Workers expecting the threaded build's message protocol against a binary that
+  doesn't speak it. Fixed with `tf.env().set("WASM_HAS_MULTITHREAD_SUPPORT", false)` +
+  `tf.wasm.setThreadsCount(1)`.
+  This class of bug (a promise that never settles, no exception, no log) was the single biggest
+  time sink in this phase — worth naming the general lesson: when an extension flow hangs with
+  zero error, the fix that finds it fastest is relaying `console.log` from wherever the hang
+  actually is (offscreen document, content script, service worker) to whichever context the test
+  harness *can* observe, not staring at the one log stream that's silent.
+- **Tesseract.js's default worker loading is incompatible with MV3 extensions.** It normally
+  wraps the worker script in a `Blob(['importScripts("<workerPath>")'])`, and that blob-origin
+  worker cannot reach `chrome-extension://` resources — not even with
+  `web_accessible_resources` declared (tried that first; it didn't help, because the blob
+  worker's origin isn't what `matches` is evaluated against). Fixed with the `workerBlobURL:
+  false` option, which loads `worker.min.js` directly instead.
+- **Tesseract.js v7's `recognize()` doesn't populate `data.words`/`data.blocks` by default** —
+  only `data.text` (plain string) and `data.tsv` are generated unless you ask for more via the
+  third (`output`) argument. Word-level boxes now come from parsing `data.tsv` (Tesseract's
+  well-documented tab-separated format) directly rather than a hierarchical field that turned
+  out to always be empty at these default settings.
+- `chrome.tabs.captureVisibleTab` needs **`<all_urls>` or `activeTab`** — the specific
+  `http://127.0.0.1:*/*`-style host_permissions used since Phase 1 (sufficient for content-script
+  injection and messaging) are not sufficient for this particular API. Broadened
+  `host_permissions` to `<all_urls>` accordingly; also learned along the way that
+  `captureVisibleTab` always captures whichever tab is *currently active* in a window (no tabId
+  parameter), so `background.js` now explicitly activates the target tab first.
+- Lost significant time to a **red herring**: after this phase's manifest/background.js changes,
+  Phase 2's agent loop appeared to hang indefinitely. Exhaustively ruled out CSP, host_permissions,
+  the event loop backend (uvloop vs asyncio), and stray processes as causes, by testing each in
+  isolation via raw `httpx` calls made directly inside a FastAPI endpoint. The actual cause: the
+  Groq free-tier **daily** token quota (200k TPD) was nearly exhausted from cumulative testing
+  across today's session, so every retry attempt in `agent_step()`'s existing backoff logic hit
+  *another* 429, taking up to ~45s to finally surface a clear rate-limit error — which looked
+  like a silent hang in shorter test timeouts. No actual regression; the retry logic was working
+  exactly as designed. Added a client-side `AbortController` timeout (45s) to `runTask()`'s fetch
+  in `background.js` regardless, so a genuinely stuck request now fails fast with a clear reason
+  instead of hanging the whole task — good hardening independent of the root cause here.
+
+**Verified:** `node tools/smoke-phase4.mjs` → **PASS** (run twice): 1 face detected (confidence
+0.66, plausible bbox), provider `wasm`, latency ~155–165ms; OCR finds 86 word regions including
+"MC-77219" and "MISSION CONTROL" from the badge PNG, provider `wasm`, latency ~1.2s. `node
+tools/smoke-phase1.mjs` still passes (no regression from the manifest/host_permissions changes).
+
+**Next:** Phase 5 — visual redaction (blur detected face boxes, black-box password fields and
+PII text regions on the screenshot canvas before it's ever allowed to leave the browser). The
+face/text detection this phase built is the direct input Phase 5 needs. Groq's daily quota is
+exhausted for the rest of today's session — Phase 2/3 live-LLM re-verification (no code changed
+there since their last green run) should resume once it resets, but isn't blocking Phase 5,
+which is also LLM-free client-side work.

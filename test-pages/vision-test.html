@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vision Test — Face + Baked-in Text</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; }
+      img { display: block; margin: 16px 0; border: 1px solid #ccc; }
+      p { font-size: 13px; color: #555; }
+    </style>
+  </head>
+  <body>
+    <h2>Vision Test Page</h2>
+    <p>
+      This page has no DOM text describing the badge details below — the only
+      way to read "Badge ID: MC-77219" is OCR over the rendered pixels. The
+      portrait is a real face the DOM extractor cannot classify as PII on its
+      own (it's just an &lt;img&gt; tag with no name/label) — only local face
+      detection can find it.
+    </p>
+    <h3>Staff photo (public-domain NASA astronaut portrait)</h3>
+    <img id="portrait" src="assets/astronaut-portrait.jpg" width="300" alt="staff portrait" />
+
+    <h3>Access badge (text rendered into a PNG, not selectable HTML)</h3>
+    <img id="badge" src="assets/access-badge.png" alt="access badge" />
+  </body>
+</html>

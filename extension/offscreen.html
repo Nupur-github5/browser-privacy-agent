@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Vision Offscreen Worker</title>
+  </head>
+  <body>
+    <!--
+      MV3 offscreen document: the only place in this extension with DOM/canvas
+      access outside of content scripts (service workers have neither). Face
+      detection needs a <canvas> to turn a screenshot data URL into pixel
+      data; OCR needs Web Workers. Both are unavailable in the background
+      service worker, which is why this exists (chrome.offscreen, reason:
+      WORKERS) rather than running vision inline in background.js.
+    -->
+    <canvas id="scratch-canvas" hidden></canvas>
+    <script src="vendor/tfjs/tf-core.min.js"></script>
+    <script src="vendor/tfjs/tf-backend-wasm.min.js"></script>
+    <script src="vendor/tfjs/tf-backend-webgpu.min.js"></script>
+    <script src="vendor/tfjs/tf-converter.min.js"></script>
+    <script src="vendor/tfjs/blazeface.min.umd.js"></script>
+    <script src="vendor/tesseract/tesseract.min.js"></script>
+    <script src="offscreen.js"></script>
+  </body>
+</html>
