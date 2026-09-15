@@ -19,5 +19,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Relay from the debug/popup page (which has no content-script context of
+  // its own) to the content script running in a specific tab.
+  if (message?.type === "RELAY_TO_TAB" && message.tabId != null) {
+    chrome.tabs.sendMessage(message.tabId, message.payload, (response) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      sendResponse(response ?? { ok: false, error: "empty response from content script" });
+    });
+    return true; // async response
+  }
+
   return false;
 });
