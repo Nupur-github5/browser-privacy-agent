@@ -16,6 +16,10 @@ You will receive a JSON object with:
 - "available_tokens": PII tokens you may use as the "value" of a type action
   when the task calls for entering that kind of data (e.g. use "[EMAIL_1]" as
   the value to fill an email field — never invent or guess the real value).
+  If "available_tokens" is EMPTY, no privacy redaction is active for this
+  task — that is normal, not an error. In that case just type realistic,
+  reasonable test data directly (e.g. a plausible name, email, phone number).
+  Never refuse or stop just because available_tokens is empty.
 - "history": actions you've already taken this task and their results.
 
 Respond with EXACTLY ONE JSON object — no markdown, no prose — describing your
@@ -35,7 +39,31 @@ RULES:
   the same turn — check the result first).
 - If nothing more can be done or the task is impossible, use "done" and
   explain why in "reason".
+
+CRITICAL — AVOID REPEATING WORK:
+- Each element in "state.elements" already reflects its CURRENT value on the
+  page (re-extracted fresh every turn). Before acting on a field, check
+  whether it already has the value you'd want to type — if it does, DO NOT
+  type into it again. Move on to the next element that still needs filling.
+- Use "history" to see what you already did. Never repeat the exact same
+  action (same target_id + same value) you already took successfully.
+- Work through the form fields top to bottom, in the order they appear in
+  "state.elements". Once every relevant field has a value, click the submit
+  button, then respond "done" on the following turn.
 """
+
+
+def _compact_element(e) -> dict:
+    # bbox is dropped here — the LLM reasons over role/label/value text, not
+    # pixel geometry; Phase 4's vision path will use bbox separately.
+    d = {"target_id": e.target_id, "role": e.role, "type": e.type}
+    if e.label:
+        d["label"] = e.label
+    if e.value not in (None, "", False):
+        d["value"] = e.value
+    if not e.visible:
+        d["visible"] = False
+    return d
 
 
 def build_messages(req: AgentStepRequest) -> list[dict]:
@@ -45,10 +73,10 @@ def build_messages(req: AgentStepRequest) -> list[dict]:
             "state_id": req.state.state_id,
             "url": req.state.url,
             "title": req.state.title,
-            "elements": [e.model_dump() for e in req.state.elements],
+            "elements": [_compact_element(e) for e in req.state.elements],
         },
         "available_tokens": req.state.available_tokens,
-        "history": [h.model_dump() for h in req.history[-8:]],
+        "history": [h.model_dump() for h in req.history[-4:]],
     }
     return [
         {"role": "system", "content": SYSTEM_PROMPT},

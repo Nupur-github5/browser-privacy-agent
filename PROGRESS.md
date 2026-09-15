@@ -63,7 +63,7 @@ to a scratch dir outside this project for reading only:
 fills name/email/phone/aadhaar/pan/address/department by `target_id`, clicks submit, submitted
 JSON matches expected values exactly).
 
-## Phase 2 — Server agent loop (end-to-end, still no privacy) ✅ code done, ⏳ awaiting live key
+## Phase 2 — Server agent loop (end-to-end, still no privacy) ✅
 
 - `server/app/schemas.py` — Pydantic models for `SanitizedState`/`Element`/`BBox` and a
   discriminated `Action` union (`ClickAction | TypeAction | ScrollAction | DoneAction`) matching
@@ -103,9 +103,42 @@ JSON matches expected values exactly).
   server is a pure function of (state, history) → action — and it means Phase 3/5's redaction
   work only ever has to reason about one outgoing HTTP call per step.
 
-**Verified:** `pytest server/tests -q` → 5 passed (agent parsing/validation/repair logic, no
-network). End-to-end smoke test (`node tools/smoke-phase2.mjs`) is written and ready but blocked
-on a `GROQ_API_KEY` — will run and report the moment it's available.
+**Verified (live, real Groq calls):** `pytest server/tests -q` → 5 passed. `node
+tools/smoke-phase2.mjs` → **PASS** (two consecutive clean runs): agent autonomously fills all 7
+employee-portal fields and submits, 9 steps, 0 repairs, ~35–45s wall clock.
+
+**Issues hit and fixed while getting the live run green:**
+- `llama-3.3-70b-versatile` (the model named in the original build brief) is no longer served by
+  Groq — the account's live model list is `openai/gpt-oss-{20b,120b}`, `groq/compound{,-mini}`,
+  `whisper-large-v3*`, `allam-2-7b`, a couple of `qwen`/`canopylabs` models, and prompt-guard
+  models. Switched default to **`openai/gpt-oss-20b`**.
+- The `gpt-oss` models are reasoning models that emit hidden chain-of-thought tokens by default,
+  which alone blew through the free tier's 8000 TPM budget in ~4 calls. Fixed by sending
+  `reasoning_effort` (`"low"` under-performed on instruction-following — see below — settled on
+  `"medium"`) and by trimming the per-step payload: `_compact_element()` in `prompt.py` drops
+  `bbox`/`visible` from what the LLM sees (the LLM reasons over role/label/value text, not pixel
+  geometry — Phase 4's vision path will consume bbox separately) and history is capped to the
+  last 4 turns instead of 8.
+- Added 429 retry-with-backoff in `server/app/llm.py` (reads `retry-after`, up to 3 retries) —
+  free-tier bursts are expected in normal use, not just under test load.
+- At `reasoning_effort: "low"` the 20b model was unreliable in two ways, both fixed by raising to
+  `"medium"` and one prompt clarification: (1) it sometimes looped, re-typing already-filled
+  fields for 25 steps without ever reaching `done` — fixed by adding an explicit
+  "CRITICAL — AVOID REPEATING WORK" rule to `SYSTEM_PROMPT` telling it to check each element's
+  current value before acting; (2) it once refused to fill the form at all, misreading an empty
+  `available_tokens` (expected in Phase 2 — no redaction yet) as a blocking error — fixed by
+  telling it explicitly that an empty token list is normal, not an error.
+- A stale leftover `python run.py` from Phase 0's manual test (started with `nohup ... &`, not
+  fully killed) sat on port 8000 for the whole session, silently serving all "healthy" checks
+  with the OLD code/env while every real fix went to a process nothing was ever hitting. Cost the
+  most debugging time of anything in this phase — always `lsof -ti:8000 | xargs kill -9` before
+  trusting a "server healthy" log line during iteration.
+- Found and fixed a real accuracy bug while poking at the transcripts, not from a test failure:
+  `dom-extractor.js` was registering each `<option>` as its own clickable target. Clicking a
+  synthetic `<option>` doesn't fire a native `<select>`'s change mechanics, so the agent could
+  "successfully click" an option and the department field would still submit empty. Removed
+  `option` from `INTERACTIVE_TAGS` — only the parent `<select>` is now exposed, and the agent
+  must use `type` on it (already correctly handled in `executor.js`'s select branch).
 
 **Next:** Phase 3 — PII detection + tokenization (port vision-guard's JS detector +
 redectionFramwork's tokenizer/vault), thread real tokens through `available_tokens`, detokenize

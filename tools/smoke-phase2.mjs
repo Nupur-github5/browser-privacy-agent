@@ -100,20 +100,30 @@ async function main() {
     await debugPage.waitForTimeout(300);
 
     await debugPage.fill("#task-input", "Fill this form with realistic test data for all fields and submit it.");
+    const clickStart = Date.now();
     await debugPage.click("#run-task-btn");
 
     // Agent loop can take a few LLM round trips — poll for completion.
     let taskResult = null;
-    const deadline = Date.now() + 60000;
+    const deadline = Date.now() + 90000;
     while (Date.now() < deadline) {
       const text = await debugPage.textContent("#task-result");
-      if (text && text !== "running...") {
-        taskResult = JSON.parse(text);
-        break;
+      if (text && text !== "running..." && text !== "(agent not run yet)") {
+        try {
+          taskResult = JSON.parse(text);
+        } catch {
+          // transient render mid-write; keep polling
+        }
+        if (taskResult) break;
       }
       await debugPage.waitForTimeout(1000);
     }
-    if (!taskResult) throw new Error("agent did not finish within 60s");
+    console.log(`polled for ${((Date.now() - clickStart) / 1000).toFixed(1)}s`);
+    if (!taskResult) {
+      console.error("--- server log ---");
+      console.error(serverLog.slice(-4000));
+      throw new Error("agent did not finish within the poll deadline");
+    }
 
     console.log("agent result:", JSON.stringify(taskResult, null, 2));
     if (!taskResult.ok) throw new Error("RUN_TASK reported failure: " + JSON.stringify(taskResult));

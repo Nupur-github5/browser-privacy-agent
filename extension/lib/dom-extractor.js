@@ -6,7 +6,11 @@
   "use strict";
   window.__PVA = window.__PVA || {};
 
-  const INTERACTIVE_TAGS = new Set(["a", "button", "input", "textarea", "select", "option", "summary"]);
+  // Deliberately excludes "option": native <select> options aren't
+  // independently clickable via synthetic DOM events — selecting one is done
+  // via a "type" action on the parent <select> (see executor.js), so we only
+  // expose the <select> itself as a target.
+  const INTERACTIVE_TAGS = new Set(["a", "button", "input", "textarea", "select", "summary"]);
   const INTERACTIVE_ROLES = new Set([
     "button", "link", "textbox", "checkbox", "radio", "combobox", "tab",
     "menuitem", "switch", "slider", "spinbutton", "searchbox", "option",

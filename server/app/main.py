@@ -10,7 +10,7 @@ from .agent import agent_step
 from .llm import LLMError
 from .schemas import AgentStepRequest, AgentStepResponse
 
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 config = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
