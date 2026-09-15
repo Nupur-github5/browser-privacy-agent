@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Demo — Autofill from Saved Profile</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 720px; margin: 24px auto; font-size: 13px; }
+      h2 { margin: 0 0 4px; }
+      h3 { margin: 16px 0 6px; font-size: 14px; }
+      .row { display: flex; gap: 32px; align-items: flex-start; flex-wrap: wrap; }
+      .col { flex: 1 1 300px; min-width: 280px; }
+      .card { border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; background: #fafafa; }
+      p.note { font-size: 12px; color: #555; margin: 4px 0 14px; }
+      label { display: block; margin-top: 10px; font-size: 12px; font-weight: 600; }
+      input { width: 100%; padding: 6px 8px; margin-top: 3px; box-sizing: border-box; }
+      .card input { background: #fff; }
+      button { margin-top: 16px; padding: 8px 16px; }
+      #result { margin-top: 14px; font-size: 12px; color: green; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <h2>New Employee Onboarding</h2>
+    <p class="note">
+      Your saved profile (left) already has your real details. Fill out the
+      application form (right) using your saved profile, then submit.
+    </p>
+    <div class="row">
+      <div class="col">
+        <h3>Saved Profile (read from here)</h3>
+        <div class="card">
+          <label for="p-name">Full Name</label>
+          <input id="p-name" value="Priya Nair" readonly />
+          <label for="p-email">Email</label>
+          <input id="p-email" value="priya.nair@example.com" readonly />
+          <label for="p-phone">Phone Number</label>
+          <input id="p-phone" value="9812345670" readonly />
+          <label for="p-aadhaar">Aadhaar Number</label>
+          <input id="p-aadhaar" value="234123412346" readonly />
+          <label for="p-pan">PAN</label>
+          <input id="p-pan" value="ABCDE1234F" readonly />
+          <label for="p-address">Address</label>
+          <input id="p-address" value="221 Residency Road, Bengaluru" readonly />
+        </div>
+      </div>
+      <div class="col">
+        <h3>Application Form (fill this in)</h3>
+        <form id="app-form">
+          <label for="full-name">Full Name</label>
+          <input id="full-name" name="fullName" type="text" autocomplete="name" />
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email" />
+          <label for="phone">Phone Number</label>
+          <input id="phone" name="phone" type="tel" autocomplete="tel" />
+          <label for="aadhaar">Aadhaar Number</label>
+          <input id="aadhaar" name="aadhaar" type="text" />
+          <label for="pan">PAN</label>
+          <input id="pan" name="pan" type="text" />
+          <label for="address">Address</label>
+          <input id="address" name="address" type="text" autocomplete="street-address" />
+          <button type="submit" id="submit-btn">Submit Application</button>
+        </form>
+        <div id="result"></div>
+      </div>
+    </div>
+
+    <script>
+      document.getElementById("app-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(e.target).entries());
+        document.getElementById("result").textContent = "Submitted: " + JSON.stringify(data);
+      });
+    </script>
+  </body>
+</html>

@@ -7,7 +7,8 @@
     "smoke:phase2": "node smoke-phase2.mjs",
     "smoke:phase3": "node smoke-phase3.mjs",
     "smoke:phase4": "node smoke-phase4.mjs",
-    "smoke:phase5": "node smoke-phase5.mjs"
+    "smoke:phase5": "node smoke-phase5.mjs",
+    "demo": "node demo.mjs"
   },
   "dependencies": {
     "playwright": "1.63.0"
