@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Privacy-Preserving Vision Agent",
+  "version": "0.1.0",
+  "description": "Reads the page locally, redacts PII on-device, and lets a server-side LLM drive click/type/scroll actions on sanitised state only.",
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Privacy Vision Agent"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {}
+}

@@ -1,0 +1,5 @@
+{
+  "cors_allow_origins": ["http://localhost:*", "http://127.0.0.1:*", "chrome-extension://*"],
+  "max_steps_per_task": 25,
+  "default_llm_provider": "groq"
+}

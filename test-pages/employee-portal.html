@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Employee Portal — New Hire Form</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; }
+      label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; }
+      input, select { width: 100%; padding: 6px 8px; margin-top: 4px; box-sizing: border-box; }
+      button { margin-top: 20px; padding: 8px 16px; }
+      #result { margin-top: 16px; font-size: 13px; color: green; }
+    </style>
+  </head>
+  <body>
+    <h2>New Hire Form</h2>
+    <form id="hire-form">
+      <label for="full-name">Full Name</label>
+      <input id="full-name" name="fullName" type="text" autocomplete="name" />
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" />
+
+      <label for="phone">Phone Number</label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel" />
+
+      <label for="aadhaar">Aadhaar Number</label>
+      <input id="aadhaar" name="aadhaar" type="text" />
+
+      <label for="pan">PAN</label>
+      <input id="pan" name="pan" type="text" />
+
+      <label for="address">Address</label>
+      <input id="address" name="address" type="text" autocomplete="street-address" />
+
+      <label for="department">Department</label>
+      <select id="department" name="department">
+        <option value="">Select department</option>
+        <option value="engineering">Engineering</option>
+        <option value="hr">HR</option>
+        <option value="finance">Finance</option>
+      </select>
+
+      <button type="submit" id="submit-btn">Submit</button>
+    </form>
+    <div id="result"></div>
+
+    <script>
+      document.getElementById("hire-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(e.target).entries());
+        document.getElementById("result").textContent =
+          "Submitted: " + JSON.stringify(data);
+      });
+    </script>
+  </body>
+</html>

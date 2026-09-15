@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+.env
+*.log
+.DS_Store
+eval/out/
+server/*.db
+models/
+*.onnx
+*.wasm
