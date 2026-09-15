@@ -11,6 +11,11 @@ import os from "node:os";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 
+const jsonMode = process.argv.includes("--json");
+const log = (...args) => {
+  if (!jsonMode) console.log(...args);
+};
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const extensionPath = path.join(repoRoot, "extension");
@@ -91,7 +96,7 @@ async function main() {
     let [sw] = context.serviceWorkers();
     if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 10000 });
     const extensionId = new URL(sw.url()).host;
-    console.log("extension id:", extensionId);
+    log("extension id:", extensionId);
 
     const formPage = await context.newPage();
     await formPage.goto(testPageUrl);
@@ -106,7 +111,7 @@ async function main() {
     await debugPage.goto(`chrome-extension://${extensionId}/debug.html`);
     await debugPage.waitForTimeout(300);
 
-    console.log("running vision scan with redaction...");
+    log("running vision scan with redaction...");
     await debugPage.click("#vision-scan-btn");
 
     let result = null;
@@ -137,10 +142,10 @@ async function main() {
     const afterPath = path.join(evalDir, "redaction-after.png");
     fs.writeFileSync(beforePath, Buffer.from(beforeUrl.replace(/^data:image\/\w+;base64,/, ""), "base64"));
     fs.writeFileSync(afterPath, Buffer.from(afterUrl.replace(/^data:image\/\w+;base64,/, ""), "base64"));
-    console.log(`privacy proof (visual) written to: ${beforePath}, ${afterPath}`);
+    log(`privacy proof (visual) written to: ${beforePath}, ${afterPath}`);
 
-    console.log(`face: ${result.face.faces.length} detected`);
-    console.log(`OCR PII regions found: ${JSON.stringify(result.text.piiRegions)}`);
+    log(`face: ${result.face.faces.length} detected`);
+    log(`OCR PII regions found: ${JSON.stringify(result.text.piiRegions)}`);
 
     // --- 1. Face region must visibly differ between before/after ---
     // Sample a 3x3 grid across the (padded, per offscreen.js's own margin)
@@ -162,7 +167,7 @@ async function main() {
         maxDist = Math.max(maxDist, colorDist(before, after));
       }
     }
-    console.log(`max pixel change across padded face region: ${maxDist.toFixed(1)}`);
+    log(`max pixel change across padded face region: ${maxDist.toFixed(1)}`);
     if (maxDist < 10) {
       throw new Error(`face region barely changed after redaction (max dist=${maxDist.toFixed(1)}) — blur/pixelation may not have applied`);
     }
@@ -179,7 +184,7 @@ async function main() {
     if (!pwdEl) throw new Error("password field not found in extracted state");
     const pwdCenter = { x: pwdEl.bbox.x + pwdEl.bbox.width / 2, y: pwdEl.bbox.y + pwdEl.bbox.height / 2 };
     const afterPwdPixel = await samplePixel(debugPage, afterUrl, pwdCenter.x, pwdCenter.y);
-    console.log(`password field center pixel after=${afterPwdPixel}`);
+    log(`password field center pixel after=${afterPwdPixel}`);
     if (!isBlack(afterPwdPixel)) {
       throw new Error(`password field region is not black after redaction (got ${afterPwdPixel})`);
     }
@@ -193,13 +198,53 @@ async function main() {
       const cx = region.x + region.width / 2;
       const cy = region.y + region.height / 2;
       const pixel = await samplePixel(debugPage, afterUrl, cx, cy);
-      console.log(`PII text region ${JSON.stringify(region)} center pixel after=${pixel}`);
+      log(`PII text region ${JSON.stringify(region)} center pixel after=${pixel}`);
       if (!isBlack(pixel)) {
         throw new Error(`PII text region at (${cx},${cy}) is not black after redaction (got ${pixel})`);
       }
     }
 
-    console.log("PHASE 5 SMOKE TEST: PASS");
+    // --- 4. Negative check: non-PII text (e.g. "Rahul Sharma", a bare name
+    // with no matching value pattern) must be left UNCHANGED — without this,
+    // "redaction precision" would be unmeasurable (a detector that just
+    // blacks out the whole image trivially passes checks 2-3).
+    const nameWord = (result.text.regions || []).find((r) => r.text === "Rahul" || r.text === "Sharma");
+    let namePreserved = null;
+    if (nameWord) {
+      const cx = nameWord.bbox.x + nameWord.bbox.width / 2;
+      const cy = nameWord.bbox.y + nameWord.bbox.height / 2;
+      const before = await samplePixel(debugPage, beforeUrl, cx, cy);
+      const after = await samplePixel(debugPage, afterUrl, cx, cy);
+      const dist = colorDist(before, after);
+      log(`non-PII "Name" text pixel dist before/after=${dist.toFixed(1)} (should be ~0, not redacted)`);
+      namePreserved = dist < 10;
+      if (!namePreserved) {
+        throw new Error(`non-PII text near "${nameWord.text}" changed after redaction (dist=${dist.toFixed(1)}) — over-redaction`);
+      }
+    }
+
+    log("PHASE 5 SMOKE TEST: PASS");
+
+    if (jsonMode) {
+      const targets = 1 /* face */ + 1 /* password */ + piiRegions.length;
+      const redactedCorrectly = targets; // every assertion above passed if we got here
+      console.log(
+        JSON.stringify({
+          ok: true,
+          faceDetected: result.face.faces.length,
+          faceLatencyMs: result.face.latencyMs,
+          faceProvider: result.face.provider,
+          ocrLatencyMs: result.text.latencyMs,
+          ocrProvider: result.text.provider,
+          piiTextRegionsFound: piiRegions.length,
+          targets,
+          redactedCorrectly,
+          redactionRecall: redactedCorrectly / targets,
+          nonPiiPreserved: namePreserved,
+        })
+      );
+    }
+
     await context.close();
   } finally {
     testServer.close();
@@ -208,7 +253,11 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("PHASE 5 SMOKE TEST: FAIL");
-  console.error(e);
+  if (jsonMode) {
+    console.log(JSON.stringify({ ok: false, error: e.message }));
+  } else {
+    console.error("PHASE 5 SMOKE TEST: FAIL");
+    console.error(e);
+  }
   process.exit(1);
 });

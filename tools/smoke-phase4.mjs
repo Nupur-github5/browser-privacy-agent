@@ -11,6 +11,11 @@ import os from "node:os";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 
+const jsonMode = process.argv.includes("--json");
+const log = (...args) => {
+  if (!jsonMode) console.log(...args);
+};
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const extensionPath = path.join(repoRoot, "extension");
@@ -60,9 +65,9 @@ async function main() {
     let [sw] = context.serviceWorkers();
     if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 10000 });
     const extensionId = new URL(sw.url()).host;
-    console.log("extension id:", extensionId);
+    log("extension id:", extensionId);
     try {
-      sw.on("console", (msg) => console.log("[sw]", msg.text()));
+      sw.on("console", (msg) => log("[sw]", msg.text()));
     } catch {
       // ignore
     }
@@ -79,7 +84,7 @@ async function main() {
     await debugPage.goto(`chrome-extension://${extensionId}/debug.html`);
     await debugPage.waitForTimeout(300);
 
-    console.log("running vision scan...");
+    log("running vision scan...");
     const t0 = Date.now();
     await debugPage.click("#vision-scan-btn");
 
@@ -97,9 +102,9 @@ async function main() {
       }
       await debugPage.waitForTimeout(500);
     }
-    console.log(`vision scan wall time: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    log(`vision scan wall time: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     if (!result) throw new Error("vision scan did not complete in time");
-    console.log("vision result:", JSON.stringify(result, null, 2));
+    log("vision result:", JSON.stringify(result, null, 2));
 
     if (!result.ok) throw new Error("VISION_SCAN failed: " + JSON.stringify(result));
 
@@ -115,19 +120,34 @@ async function main() {
     if (typeof face.latencyMs !== "number" || face.latencyMs <= 0) {
       throw new Error("expected a positive face detection latency, got: " + face.latencyMs);
     }
-    console.log(`face detection: ${face.faces.length} face(s), provider=${face.provider}, latency=${face.latencyMs}ms`);
+    log(`face detection: ${face.faces.length} face(s), provider=${face.provider}, latency=${face.latencyMs}ms`);
 
     // --- OCR assertions ---
     const textResult = result.text;
     if (textResult.error) throw new Error("OCR errored: " + textResult.error);
     const allText = (textResult.regions || []).map((r) => r.text).join(" ");
-    console.log("OCR extracted text:", allText);
+    log("OCR extracted text:", allText);
     if (!/77219|MISSION|CONTROL|Badge/i.test(allText)) {
       throw new Error(`OCR did not find expected badge text (got: "${allText}")`);
     }
-    console.log(`OCR: ${textResult.regions.length} word region(s), provider=${textResult.provider}, latency=${textResult.latencyMs}ms`);
+    log(`OCR: ${textResult.regions.length} word region(s), provider=${textResult.provider}, latency=${textResult.latencyMs}ms`);
 
-    console.log("PHASE 4 SMOKE TEST: PASS");
+    log("PHASE 4 SMOKE TEST: PASS");
+
+    if (jsonMode) {
+      console.log(
+        JSON.stringify({
+          ok: true,
+          faceLatencyMs: face.latencyMs,
+          faceProvider: face.provider,
+          facesDetected: face.faces.length,
+          ocrLatencyMs: textResult.latencyMs,
+          ocrProvider: textResult.provider,
+          ocrWordsFound: textResult.regions.length,
+        })
+      );
+    }
+
     await context.close();
   } finally {
     testServer.close();
@@ -136,7 +156,11 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("PHASE 4 SMOKE TEST: FAIL");
-  console.error(e);
+  if (jsonMode) {
+    console.log(JSON.stringify({ ok: false, error: e.message }));
+  } else {
+    console.error("PHASE 4 SMOKE TEST: FAIL");
+    console.error(e);
+  }
   process.exit(1);
 });

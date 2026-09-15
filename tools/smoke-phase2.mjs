@@ -9,6 +9,11 @@ import http from "node:http";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+const jsonMode = process.argv.includes("--json");
+const log = (...args) => {
+  if (!jsonMode) console.log(...args);
+};
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const extensionPath = path.join(repoRoot, "extension");
@@ -74,7 +79,7 @@ async function main() {
 
   try {
     await waitForHealth("http://127.0.0.1:8000/health");
-    console.log("server healthy");
+    log("server healthy");
 
     const chromeBinary = path.join(os.homedir(), ".cache/ms-playwright/chromium-1234/chrome-linux64/chrome");
     const context = await chromium.launchPersistentContext(userDataDir, {
@@ -90,7 +95,7 @@ async function main() {
     let [sw] = context.serviceWorkers();
     if (!sw) sw = await context.waitForEvent("serviceworker", { timeout: 10000 });
     const extensionId = new URL(sw.url()).host;
-    console.log("extension id:", extensionId);
+    log("extension id:", extensionId);
 
     const formPage = await context.newPage();
     await formPage.goto(testPageUrl);
@@ -118,24 +123,35 @@ async function main() {
       }
       await debugPage.waitForTimeout(1000);
     }
-    console.log(`polled for ${((Date.now() - clickStart) / 1000).toFixed(1)}s`);
+    log(`polled for ${((Date.now() - clickStart) / 1000).toFixed(1)}s`);
     if (!taskResult) {
-      console.error("--- server log ---");
+      log("--- server log ---");
       console.error(serverLog.slice(-4000));
       throw new Error("agent did not finish within the poll deadline");
     }
 
-    console.log("agent result:", JSON.stringify(taskResult, null, 2));
+    log("agent result:", JSON.stringify(taskResult, null, 2));
     if (!taskResult.ok) throw new Error("RUN_TASK reported failure: " + JSON.stringify(taskResult));
     if (!taskResult.done) throw new Error("agent did not reach done within max steps: " + JSON.stringify(taskResult));
 
     const resultText = await formPage.textContent("#result");
-    console.log("form result:", resultText);
+    log("form result:", resultText);
     if (!resultText.startsWith("Submitted:")) {
       throw new Error("form was not submitted: " + resultText);
     }
 
-    console.log("PHASE 2 SMOKE TEST: PASS");
+    log("PHASE 2 SMOKE TEST: PASS");
+
+    if (jsonMode) {
+      console.log(
+        JSON.stringify({
+          ok: true,
+          endToEndLatencyMs: Date.now() - clickStart,
+          steps: taskResult.steps.length,
+        })
+      );
+    }
+
     await context.close();
   } finally {
     testServer.close();
@@ -145,7 +161,11 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("PHASE 2 SMOKE TEST: FAIL");
-  console.error(e);
+  if (jsonMode) {
+    console.log(JSON.stringify({ ok: false, error: e.message }));
+  } else {
+    console.error("PHASE 2 SMOKE TEST: FAIL");
+    console.error(e);
+  }
   process.exit(1);
 });

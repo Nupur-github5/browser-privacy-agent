@@ -2,7 +2,9 @@
 // small hand-labelled set (eval/pii_testset.json) covering positive PII,
 // negative non-PII, and deliberately ambiguous/adversarial cases.
 //
-// Usage: node eval/pii-precision-recall.mjs
+// Usage: node eval/pii-precision-recall.mjs [--json]
+const jsonMode = process.argv.includes("--json");
+
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
@@ -50,6 +52,15 @@ for (const c of cases) {
 const precision = tp + fp === 0 ? 1 : tp / (tp + fp);
 const recall = tp + fn === 0 ? 1 : tp / (tp + fn);
 const f1 = precision + recall === 0 ? 0 : (2 * precision * recall) / (precision + recall);
+
+if (jsonMode) {
+  const perCategoryOut = {};
+  for (const [cat, { tp, fn }] of Object.entries(perCategory)) {
+    perCategoryOut[cat] = { tp, fn, recall: tp + fn === 0 ? 1 : tp / (tp + fn) };
+  }
+  console.log(JSON.stringify({ n: cases.length, tp, fp, fn, tn, precision, recall, f1, perCategory: perCategoryOut, misses }));
+  process.exit(0);
+}
 
 console.log(`PII Detector Evaluation — ${cases.length} labelled cases`);
 console.log("=".repeat(60));

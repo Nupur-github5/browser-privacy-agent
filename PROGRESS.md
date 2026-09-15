@@ -360,9 +360,45 @@ missed face is a real privacy leak, a false-positive blur is just wasted pixels 
 `(0,0,0)`, both ID-card PII regions' centre pixels `(0,0,0)`. `node tools/smoke-phase1.mjs` and
 `node tools/smoke-phase4.mjs` still pass — no regression.
 
-**Next:** Phase 6 — evaluation harness (`eval/run.py`) that aggregates everything already
-measured phase-by-phase — PII precision/recall (Phase 3), redaction precision (Phase 5), client
-inference latency (Phase 4), end-to-end task latency (Phase 2) — into one metrics table, plus a
-labelled ground-truth set with positive/negative/ambiguous tiers (the PII one already exists;
-redaction and latency need their own). Groq's daily quota should be checked before resuming any
-live-LLM verification (Phase 2/3 code is unchanged since their last green run, so not urgent).
+## Phase 6 — Evaluation harness ✅
+
+- `eval/run.py`: one entry point, five sections, each backed by a real run of the actual
+  extension in a real browser — nothing in the report is estimated or hand-typed. It shells out
+  to the same Playwright scripts already built (and independently verified) in earlier phases,
+  each of which gained a `--json` output mode for this purpose (`eval/pii-precision-recall.mjs`,
+  `tools/smoke-phase{2,4,5}.mjs`), parses their last JSON-shaped stdout line, and formats a
+  unified report:
+  1. **PII detection precision/recall/F1** (overall + per-category) — Phase 3's detector against
+     the 27-case labelled set.
+  2. **Redaction precision/recall** — Phase 5's pixel-sampling checks against the
+     face/password/PII-in-image targets, plus a genuine precision signal (a non-PII "Name" text
+     region must stay *unredacted* — without checking that, a detector that just blacks out the
+     whole image would trivially pass).
+  3. **Visual-context accuracy** — Phase 4's face + OCR detection quality and latency.
+  4. **Client resource use** — actual `extension/lib` / `vendor` / `models` directory sizes on
+     disk (20.3KB / 8.1MB / 4.4MB) plus measured per-scan CPU latency; notes that the vision
+     bundle only loads inside the on-demand `chrome.offscreen` document, so it costs nothing on
+     ordinary page loads — the always-on path (DOM extraction, PII detection, tokenization) is
+     `lib/` alone.
+  5. **End-to-end task latency** — Phase 2's live agent loop. Wrapped so a failure here (LLM
+     quota, network) degrades to a clearly-labelled `N/A` with the actual error message and a
+     pointer to check quota before assuming a code problem, rather than crashing the whole
+     report — sections 1-4 are pure client-side work and have no reason to be blocked by section
+     5's dependency on a live key.
+- `--skip-llm` flag skips section 5 outright for a fast, key-independent run.
+
+**Verified:** `python eval/run.py --skip-llm` → all four client-side sections report real
+numbers (PII: 94.4% precision / 100% recall / 97.1% F1; redaction: 4/4 targets correctly
+redacted, non-PII content preserved; vision: 1 face + 86 OCR words, both ~150-1300ms; resource
+use: 12.5MB total bundle, ~1.4s per-scan CPU cost). `python eval/run.py` (no flag, live LLM
+attempted) → sections 1-4 identical, section 5 degrades to a clean `N/A` with the real Groq
+quota-exhaustion error rather than crashing — and the partial agent transcript in that error
+confirms the Phase 2 loop is still working correctly today (7 correct steps, including reusing
+an already-issued `[NAME_1]`/`[EMAIL_1]` token) right up until the quota cut it off.
+
+**Next:** Phase 7 — demo + docs. One scripted end-to-end scenario (Aadhaar/PAN/phone/email/name/
+address all redacted before leaving the browser, form still submits correctly) and a README with
+setup, run steps, an architecture summary, the metrics table from this phase, and the privacy
+proof (`eval/network-payload.jsonl` + `eval/redaction-{before,after}.png`). Should also verify
+against a fresh clone once Groq's daily quota has reset, to get a genuine end-to-end latency
+number into the final report rather than relying on today's partial transcript.
