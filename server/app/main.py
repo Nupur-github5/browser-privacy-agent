@@ -3,8 +3,12 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+
+from .agent import agent_step
+from .llm import LLMError
+from .schemas import AgentStepRequest, AgentStepResponse
 
 load_dotenv()
 
@@ -25,3 +29,11 @@ app.add_middleware(
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/agent/step", response_model=AgentStepResponse)
+async def agent_step_endpoint(req: AgentStepRequest):
+    try:
+        return await agent_step(req)
+    except LLMError as e:
+        raise HTTPException(status_code=502, detail=str(e))

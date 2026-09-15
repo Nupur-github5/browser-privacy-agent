@@ -63,5 +63,51 @@ to a scratch dir outside this project for reading only:
 fills name/email/phone/aadhaar/pan/address/department by `target_id`, clicks submit, submitted
 JSON matches expected values exactly).
 
-**Next:** Phase 2 — server agent loop (LLM chooses actions from raw state; still no privacy),
-looped against `content.js` until `done`, with action validation against known `target_id`s.
+## Phase 2 — Server agent loop (end-to-end, still no privacy) ✅ code done, ⏳ awaiting live key
+
+- `server/app/schemas.py` — Pydantic models for `SanitizedState`/`Element`/`BBox` and a
+  discriminated `Action` union (`ClickAction | TypeAction | ScrollAction | DoneAction`) matching
+  the schema in the spec exactly (no `navigate`/`press`/`wait` — kept the action surface to what
+  the client executor actually implements).
+  `AgentStepRequest`/`AgentStepResponse` carry `{state, history}` in, `{action, repaired,
+  raw_llm_output}` out.
+  `raw_llm_output` is a debug field returned on every response — not sent back to the client's
+  network layer by anything downstream, and will need excluding from any payload log once Phase
+  3 wires up the "prove no PII leaves the browser" logging in `eval/`.
+- `server/app/llm.py` — `GroqClient`, thin `httpx` wrapper over Groq's OpenAI-compatible
+  `/chat/completions`, JSON mode on, no `groq` SDK dependency (keeps the server light).
+- `server/app/prompt.py` — system prompt explains the token/PII contract up front (agent must
+  never invent PII, must use `available_tokens` verbatim) even though Phase 2 always sends an
+  empty token list — this way Phase 3 needs no prompt rewrite, only real tokens flowing in.
+- `server/app/agent.py` — `agent_step()`: calls the LLM, strips stray markdown fences, parses
+  into the `Action` union, validates `target_id` against the current state's elements and any
+  `[TOKEN_N]`-shaped value against `available_tokens`. On failure, does ONE repair round-trip
+  (re-prompts the model with its bad output + the validation error); if that also fails, returns
+  a synthetic `{"action": "done", "reason": "..."}` rather than crashing the loop.
+  `POST /agent/step` in `server/app/main.py` exposes this.
+- `server/tests/test_agent.py` (pytest + pytest-asyncio, `FakeLLM` stub — no network/key needed)
+  — 5 tests: valid action passes straight through; unknown `target_id` triggers repair and
+  recovers; markdown-fenced JSON is stripped; a token outside `available_tokens` is rejected and
+  repaired; two rounds of unparseable garbage falls back to `done`. All 5 pass
+  (`pytest server/tests -q`).
+- `extension/background.js` gained `runTask(tabId, task)`: loops
+  `EXTRACT_STATE → POST /agent/step → EXECUTE_ACTION` (re-extracting state each turn) until the
+  server returns `done` or `MAX_STEPS` (25) is hit, driven from the client so no server-side
+  polling/session state is needed. Wired to a new "Run Agent" control in `extension/debug.html`.
+- `tools/smoke-phase2.mjs` — spawns the real FastAPI server (real Groq calls), loads the
+  extension, drives "Fill this form with realistic test data ... and submit" through the debug
+  page's Run Agent button, polls for completion, and asserts the form actually submitted.
+  **Not yet run** — needs a `GROQ_API_KEY` in `server/.env`, which is the user's to provide.
+- Decision: the client (background service worker) owns the step loop rather than the server
+  polling an action queue (as in the `new-sih` reference). One dependency direction only —
+  server is a pure function of (state, history) → action — and it means Phase 3/5's redaction
+  work only ever has to reason about one outgoing HTTP call per step.
+
+**Verified:** `pytest server/tests -q` → 5 passed (agent parsing/validation/repair logic, no
+network). End-to-end smoke test (`node tools/smoke-phase2.mjs`) is written and ready but blocked
+on a `GROQ_API_KEY` — will run and report the moment it's available.
+
+**Next:** Phase 3 — PII detection + tokenization (port vision-guard's JS detector +
+redectionFramwork's tokenizer/vault), thread real tokens through `available_tokens`, detokenize
+client-side right before `EXECUTE_ACTION` runs a `type`, and log the exact outgoing
+`/agent/step` payload to prove zero raw PII crosses the wire.

@@ -44,4 +44,15 @@ document.getElementById("execute-btn").addEventListener("click", async () => {
   document.getElementById("exec-result").textContent = JSON.stringify(response, null, 2);
 });
 
+document.getElementById("run-task-btn").addEventListener("click", async () => {
+  await refreshActiveTab();
+  if (activeTabId == null) return;
+  const task = document.getElementById("task-input").value;
+  const resultEl = document.getElementById("task-result");
+  resultEl.textContent = "running...";
+  chrome.runtime.sendMessage({ type: "RUN_TASK", tabId: activeTabId, task }, (response) => {
+    resultEl.textContent = JSON.stringify(response, null, 2);
+  });
+});
+
 refreshActiveTab();

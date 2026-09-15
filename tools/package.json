@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "smoke:phase1": "node smoke-phase1.mjs"
+    "smoke:phase1": "node smoke-phase1.mjs",
+    "smoke:phase2": "node smoke-phase2.mjs"
   },
   "dependencies": {
     "playwright": "1.63.0"
