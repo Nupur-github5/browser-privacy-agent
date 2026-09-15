@@ -1,7 +1,7 @@
 import pytest
 
 from app.agent import agent_step
-from app.llm import GroqClient
+from app.llm import GroqClient, LLMError
 from app.schemas import AgentStepRequest, Element, SanitizedState
 
 
@@ -23,6 +23,7 @@ def make_state(**overrides):
 
 class FakeLLM(GroqClient):
     def __init__(self, responses):
+        # each entry is either a raw response string, or an Exception to raise
         self._responses = list(responses)
         self.calls = []
 
@@ -31,7 +32,10 @@ class FakeLLM(GroqClient):
 
     async def chat(self, messages, temperature=0.2, json_mode=True):
         self.calls.append(messages)
-        return self._responses.pop(0)
+        item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
 @pytest.mark.asyncio
@@ -79,8 +83,32 @@ async def test_token_not_in_available_tokens_is_rejected_then_repaired():
 
 @pytest.mark.asyncio
 async def test_persistent_garbage_falls_back_to_done():
-    llm = FakeLLM(["not json at all", "still not json"])
+    llm = FakeLLM(["not json at all", "still not json", "nope still garbage"])
     req = AgentStepRequest(state=make_state())
     resp = await agent_step(req, llm=llm)
     assert resp.action["action"] == "done"
     assert resp.repaired is True
+
+
+@pytest.mark.asyncio
+async def test_transient_llm_error_is_retried_and_recovers():
+    llm = FakeLLM([
+        LLMError("Groq API error 400: json_validate_failed"),
+        '{"action": "click", "target_id": 2, "reason": "submit"}',
+    ])
+    req = AgentStepRequest(state=make_state())
+    resp = await agent_step(req, llm=llm)
+    assert resp.action == {"action": "click", "target_id": 2, "reason": "submit"}
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_llm_error_on_final_attempt_propagates():
+    llm = FakeLLM([
+        LLMError("first failure"),
+        LLMError("second failure"),
+        LLMError("third failure"),
+    ])
+    req = AgentStepRequest(state=make_state())
+    with pytest.raises(LLMError):
+        await agent_step(req, llm=llm)

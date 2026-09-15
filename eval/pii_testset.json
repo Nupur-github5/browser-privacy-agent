@@ -1,0 +1,34 @@
+{
+  "description": "Small labelled set for PII detector precision/recall: positive (real PII), negative (non-PII), and ambiguous cases. Element shape matches dom-extractor.js's stable schema {role,label,type,value}.",
+  "cases": [
+    { "tier": "positive", "expected_pii": true, "expected_category": "NAME", "element": { "role": "textbox", "label": "Full Name", "type": "text", "value": "Asha Verma" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "NAME", "element": { "role": "textbox", "label": "Employee Name", "type": "text", "value": "" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "EMAIL", "element": { "role": "textbox", "label": "Email", "type": "email", "value": "asha.verma@example.com" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "EMAIL", "element": { "role": "textbox", "label": "Work Email", "type": "text", "value": "" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "PHONE", "element": { "role": "textbox", "label": "Phone Number", "type": "tel", "value": "9876543210" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "PHONE", "element": { "role": "textbox", "label": "Mobile", "type": "text", "value": "+91 98765 43210" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "AADHAAR", "element": { "role": "textbox", "label": "Aadhaar Number", "type": "text", "value": "234123412346" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "AADHAAR", "element": { "role": "textbox", "label": "Confirm Aadhaar Number", "type": "text", "value": "" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "PAN", "element": { "role": "textbox", "label": "PAN", "type": "text", "value": "ABCDE1234F" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "GSTIN", "element": { "role": "textbox", "label": "GSTIN", "type": "text", "value": "29ABCDE1234F1Z5" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "IFSC", "element": { "role": "textbox", "label": "Bank IFSC", "type": "text", "value": "HDFC0001234" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "UPI", "element": { "role": "textbox", "label": "UPI ID", "type": "text", "value": "asha.verma@okhdfcbank" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "ADDRESS", "element": { "role": "textbox", "label": "Address", "type": "text", "value": "12 MG Road, Bengaluru" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "PASSWORD", "element": { "role": "textbox", "label": "Password", "type": "password", "value": "" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "CARD", "element": { "role": "textbox", "label": "Card Number", "type": "text", "value": "4111111111111111" } },
+    { "tier": "positive", "expected_pii": true, "expected_category": "NAME", "element": { "role": "textbox", "label": "Cardholder Name", "type": "text", "value": "Rahul Sharma" } },
+
+    { "tier": "negative", "expected_pii": false, "element": { "role": "combobox", "label": "Department", "type": "select", "value": "engineering" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "button", "label": "Submit", "type": "submit", "value": "" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "textbox", "label": "Quantity", "type": "number", "value": "42" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "textbox", "label": "Order ID", "type": "text", "value": "ORD-99182" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "textbox", "label": "Product", "type": "text", "value": "Wireless Mouse" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "combobox", "label": "Country", "type": "select", "value": "India" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "textbox", "label": "Search", "type": "text", "value": "laptop stand" } },
+    { "tier": "negative", "expected_pii": false, "element": { "role": "button", "label": "Cancel", "type": "button", "value": "" } },
+
+    { "tier": "ambiguous", "expected_pii": false, "element": { "role": "textbox", "label": "Reference Number", "type": "text", "value": "9876543210123" } },
+    { "tier": "ambiguous", "expected_pii": false, "element": { "role": "textbox", "label": "Ticket ID", "type": "text", "value": "ABCDE1234F" } },
+    { "tier": "ambiguous", "expected_pii": true, "expected_category": "PHONE", "element": { "role": "textbox", "label": "Contact", "type": "text", "value": "9876543210" } }
+  ]
+}

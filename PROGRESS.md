@@ -140,7 +140,80 @@ employee-portal fields and submits, 9 steps, 0 repairs, ~35–45s wall clock.
   `option` from `INTERACTIVE_TAGS` — only the parent `<select>` is now exposed, and the agent
   must use `type` on it (already correctly handled in `executor.js`'s select branch).
 
-**Next:** Phase 3 — PII detection + tokenization (port vision-guard's JS detector +
-redectionFramwork's tokenizer/vault), thread real tokens through `available_tokens`, detokenize
-client-side right before `EXECUTE_ACTION` runs a `type`, and log the exact outgoing
-`/agent/step` payload to prove zero raw PII crosses the wire.
+## Phase 3 — PII detection + tokenization ✅
+
+- `extension/lib/pii-patterns.js` (UMD — runs in both the content script and Node) — regex +
+  checksum value detectors ported from redectionFramwork's `pii_detector.py`: EMAIL, GSTIN
+  (mod-36 checksum), AADHAAR (Verhoeff checksum), PAN, IFSC, UPI, CARD (Luhn), PHONE (Indian
+  mobile). Checksums are enforced, not just format-matched, matching the reference's design —
+  a format match that fails its checksum is not reported.
+- `extension/lib/pii-detector.js` (UMD) — `classifyElement({role,label,type,value})` combines
+  three signals in priority order: (1) value regex/checksum — strongest, works on filled fields;
+  (2) DOM `type` attribute (email/tel/password) — strong, works on empty fields too, needed so
+  an about-to-be-filled field still gets recognised; (3) label keyword match (adapted from
+  vision-guard's `KEYWORD_GROUPS`) — medium confidence, also works empty. A negative-context
+  check (button roles, submit/cancel/department/etc. labels) runs first and short-circuits
+  everything else, so e.g. the "Department" `<select>` is never mistaken for PII.
+- `extension/lib/tokenizer.js` — in-memory `Vault`: `tokenize(category, value)` (dedupes
+  identical values to the same token via a `category::value` key, so the same real value always
+  maps to the same token across re-extractions without needing to persist the vault instance
+  itself), `detokenize(token)`, `detokenizeText()` (replaces every `[TOKEN_N]` in a string).
+  Lives only in the content script's isolated world; never serialised.
+- `content.js`: `extractState()` now runs every element through the classifier and swaps the
+  `value` for a token when PII is detected (and the field is non-empty — nothing to redact in an
+  empty field yet); `executeAction()` detokenizes any `[TOKEN_N]` in `action.value` right before
+  handing off to `executor.js`, so the real value only ever exists in the DOM and the vault, never
+  in a message or network payload.
+- Removed `option` from `dom-extractor.js`'s `INTERACTIVE_TAGS` (found while testing this phase,
+  not this phase's bug, but this is where it got caught): a synthetic click on an `<option>`
+  doesn't fire native `<select>` change mechanics, so the agent could "successfully" select a
+  department and have it submit empty. Selection now always goes through `executor.js`'s
+  type-on-`<select>` path.
+- `server/app/main.py`: `PVA_LOG_PAYLOADS=1` (server/.env) appends every `/agent/step` request
+  the server *actually received* to `eval/network-payload.jsonl` — the privacy proof reads from
+  the receiving end, not a client-side claim of what was sent.
+- New test page `test-pages/pii-review.html`: pre-filled with real (synthetic) PII — name,
+  email, phone, Aadhaar (`234123412346`, Verhoeff-valid), PAN, address — plus an empty "Confirm
+  Aadhaar Number" field. Exercises the full loop: extraction must tokenize the pre-filled values,
+  the agent must reuse `[AADHAAR_1]` from `available_tokens` to fill the confirm field, and the
+  client must detokenize it back to the real number before typing.
+- `tools/smoke-phase3.mjs` — end-to-end: asserts (a) no raw PII value ever appears in
+  `eval/network-payload.jsonl`, (b) `[AADHAAR_1]` DOES appear there (proving redaction is active,
+  not just coincidentally absent data), and (c) the form submits with the REAL Aadhaar number in
+  both the original and confirm fields (proving client-side detokenization is correct, not just
+  that redaction happened).
+- `eval/pii_testset.json` + `eval/pii-precision-recall.mjs` — 27 hand-labelled cases (positive/
+  negative/ambiguous tiers) run straight through `classifyElement()` via Node. **Result:
+  precision 94.4%, recall 100%, F1 97.1%.** The one false positive is a deliberately adversarial
+  case ("Ticket ID" whose value happens to be PAN-shaped) — a known, honest limitation of
+  format-only detection without negative context for that specific collision, not hidden or
+  excluded from the set.
+- Fixed a real reliability gap surfaced while testing this phase: Groq's own JSON-mode
+  validation occasionally fails server-side and returns an empty generation with a 400 (not a
+  429) — `agent_step()` in `server/app/agent.py` now retries transient `LLMError`s from the LLM
+  call itself (up to 3 attempts total, shared with the parse/validation repair budget) instead of
+  letting one bad generation abort the whole step. Two new unit tests cover this (retry-and-
+  recover, and propagation when all attempts are transient failures) — 7/7 passing.
+
+**Verified (live, real Groq calls):**
+- `node eval/pii-precision-recall.mjs` → precision 94.4%, recall 100%, F1 97.1% (no network).
+- `pytest server/tests -q` → 7 passed.
+- `node tools/smoke-phase3.mjs` → **PASS**: zero raw PII in any logged outgoing payload, the
+  `[AADHAAR_1]` token present (redaction confirmed active), and the form submitted with the
+  correct real Aadhaar value in both fields (detokenization confirmed correct).
+- `node tools/smoke-phase1.mjs` → still PASS (no regression).
+- `node tools/smoke-phase2.mjs` → still PASS. Also surfaced a nice side effect: once the agent
+  types real-looking data into employee-portal's fields, the *next* extraction on that same page
+  now tokenizes them too — Phase 3's redaction protects any page with real-looking PII values on
+  it, not just the dedicated PII test page. The model occasionally does one harmless redundant
+  re-type of an already-filled (now-tokenized) field before recognizing it's done; costs a step,
+  never breaks correctness.
+- Note: further live re-confirmation was cut short by Groq's free-tier **daily** token quota
+  (200k TPD) being exhausted by this session's iterative testing — not a code issue. The
+  `network-payload.jsonl` and passing run above are from before the quota hit; the agent.py
+  changes made afterward (LLM-error retry) are covered by unit tests and don't touch the
+  tokenize/detokenize/prompt logic Phase 3 actually validates.
+
+**Next:** Phase 4 — local vision (face detection + OCR on-device via WebGPU/WASM), the
+25%-weighted differentiator. Given today's Groq quota is exhausted, live agent-loop smoke tests
+for later phases should resume once the daily quota resets or a fresh key is provided.

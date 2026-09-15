@@ -105,7 +105,7 @@ async function main() {
 
     // Agent loop can take a few LLM round trips — poll for completion.
     let taskResult = null;
-    const deadline = Date.now() + 90000;
+    const deadline = Date.now() + 150000;
     while (Date.now() < deadline) {
       const text = await debugPage.textContent("#task-result");
       if (text && text !== "running..." && text !== "(agent not run yet)") {

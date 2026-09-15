@@ -45,16 +45,29 @@ async def agent_step(req: AgentStepRequest, llm: GroqClient | None = None) -> Ag
 
     last_error = None
     last_raw = None
-    for attempt in range(2):
-        if attempt > 0 and last_error and last_raw:
+    had_generation = False
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        if attempt > 0 and had_generation and last_error and last_raw:
             messages.append({"role": "assistant", "content": last_raw})
             messages.append(build_repair_message(last_raw, last_error))
 
         try:
             raw = await llm.chat(messages)
         except LLMError as e:
-            raise
+            # Transient provider-side failures (e.g. Groq's own JSON-mode
+            # validation occasionally fails and returns an empty generation)
+            # count as one failed attempt rather than aborting the whole
+            # step — a straight retry with the same messages usually
+            # succeeds, so no repair message is appended (there is no bad
+            # generation to show the model).
+            if attempt == max_attempts - 1:
+                raise
+            last_error = str(e)
+            had_generation = False
+            continue
 
+        had_generation = True
         last_raw = raw
         try:
             action = parse_action(raw)

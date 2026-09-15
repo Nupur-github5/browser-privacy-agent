@@ -7,6 +7,7 @@ node_modules/
 *.log
 .DS_Store
 eval/out/
+eval/network-payload.jsonl
 server/*.db
 models/
 *.onnx

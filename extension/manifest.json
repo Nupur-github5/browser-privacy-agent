@@ -17,6 +17,9 @@
       "matches": ["<all_urls>"],
       "js": [
         "lib/element-registry.js",
+        "lib/pii-patterns.js",
+        "lib/pii-detector.js",
+        "lib/tokenizer.js",
         "lib/dom-extractor.js",
         "lib/executor.js",
         "content.js"

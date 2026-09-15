@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Profile Review — Verify &amp; Confirm</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 480px; margin: 40px auto; }
+      label { display: block; margin-top: 12px; font-size: 13px; font-weight: 600; }
+      input { width: 100%; padding: 6px 8px; margin-top: 4px; box-sizing: border-box; }
+      button { margin-top: 20px; padding: 8px 16px; }
+      #result { margin-top: 16px; font-size: 13px; color: green; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <h2>Profile Review</h2>
+    <p>These fields are pre-filled from your saved profile. Confirm your Aadhaar number and submit.</p>
+    <form id="review-form">
+      <label for="full-name">Full Name</label>
+      <input id="full-name" name="fullName" type="text" autocomplete="name" value="Asha Verma" />
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" value="asha.verma@example.com" />
+
+      <label for="phone">Phone Number</label>
+      <input id="phone" name="phone" type="tel" autocomplete="tel" value="9876543210" />
+
+      <label for="aadhaar">Aadhaar Number</label>
+      <input id="aadhaar" name="aadhaar" type="text" value="234123412346" />
+
+      <label for="pan">PAN</label>
+      <input id="pan" name="pan" type="text" value="ABCDE1234F" />
+
+      <label for="address">Address</label>
+      <input id="address" name="address" type="text" autocomplete="street-address" value="12 MG Road, Bengaluru" />
+
+      <label for="confirm-aadhaar">Confirm Aadhaar Number</label>
+      <input id="confirm-aadhaar" name="confirmAadhaar" type="text" />
+
+      <button type="submit" id="submit-btn">Submit</button>
+    </form>
+    <div id="result"></div>
+
+    <script>
+      document.getElementById("review-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const data = Object.fromEntries(new FormData(e.target).entries());
+        document.getElementById("result").textContent =
+          "Submitted: " + JSON.stringify(data);
+      });
+    </script>
+  </body>
+</html>

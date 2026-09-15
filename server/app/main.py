@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,20 @@ from .llm import LLMError
 from .schemas import AgentStepRequest, AgentStepResponse
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+
+# Privacy proof: when enabled, every /agent/step request this server actually
+# received (not what the client claims to have sent) is appended verbatim to
+# a JSONL log. eval/ and the demo read this file to prove no raw PII ever
+# reached the server — see PVA_LOG_PAYLOADS in server/.env.example.
+PAYLOAD_LOG_PATH = Path(__file__).resolve().parent.parent.parent / "eval" / "network-payload.jsonl"
+
+
+def log_payload(req: AgentStepRequest) -> None:
+    if not os.getenv("PVA_LOG_PAYLOADS"):
+        return
+    PAYLOAD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(PAYLOAD_LOG_PATH, "a") as f:
+        f.write(json.dumps({"ts": time.time(), "path": "/agent/step", "body": req.model_dump()}) + "\n")
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 config = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
@@ -33,6 +48,7 @@ def health():
 
 @app.post("/agent/step", response_model=AgentStepResponse)
 async def agent_step_endpoint(req: AgentStepRequest):
+    log_payload(req)
     try:
         return await agent_step(req)
     except LLMError as e:
