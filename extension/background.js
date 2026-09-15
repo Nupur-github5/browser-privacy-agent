@@ -52,16 +52,30 @@ async function captureActiveTab(tabId) {
   return chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
 }
 
-async function runVisionScan(tabId, { skipOcr = false } = {}) {
+async function runVisionScan(tabId, { skipOcr = false, redact = true } = {}) {
   await ensureOffscreenDocument();
+
+  // Password field boxes come from the DOM, not vision — a filled password
+  // input renders as dots, not the real characters, but redaction blacks it
+  // out anyway per spec (defense in depth, and it hides the dot count/box
+  // outline too). Best-effort: if extraction fails, redaction still runs
+  // with face + OCR-matched PII coverage.
+  let passwordBboxes = [];
+  if (redact) {
+    const extractResp = await sendToTab(tabId, { type: "EXTRACT_STATE" });
+    if (extractResp?.ok) {
+      passwordBboxes = extractResp.state.elements.filter((e) => e.type === "password" && e.visible).map((e) => e.bbox);
+    }
+  }
+
   const imageDataUrl = await captureActiveTab(tabId);
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "RUN_VISION", imageDataUrl, skipOcr }, (response) => {
+    chrome.runtime.sendMessage({ type: "RUN_VISION", imageDataUrl, skipOcr, redact, passwordBboxes }, (response) => {
       if (chrome.runtime.lastError) {
         resolve({ ok: false, error: chrome.runtime.lastError.message });
         return;
       }
-      resolve(response);
+      resolve(response?.ok ? { ...response, beforeImageDataUrl: imageDataUrl } : response);
     });
   });
 }
@@ -156,7 +170,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "VISION_SCAN" && message.tabId != null) {
-    runVisionScan(message.tabId, { skipOcr: message.skipOcr })
+    runVisionScan(message.tabId, { skipOcr: message.skipOcr, redact: message.redact !== false })
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true; // async response

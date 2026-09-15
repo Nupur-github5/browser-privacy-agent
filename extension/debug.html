@@ -29,10 +29,15 @@
     </div>
     <pre id="exec-result">(no action executed yet)</pre>
 
-    <h3>Vision Scan (Phase 4)</h3>
+    <h3>Vision Scan (Phase 4/5)</h3>
     <div class="row">
       <button id="vision-scan-btn">Run Vision Scan</button>
       <label><input type="checkbox" id="skip-ocr" /> skip OCR (faster)</label>
+      <label><input type="checkbox" id="no-redact" /> skip redaction</label>
+    </div>
+    <div class="row">
+      <div><div>Before</div><img id="vision-before" style="max-width:320px;border:1px solid #ccc" /></div>
+      <div><div>After (redacted)</div><img id="vision-after" style="max-width:320px;border:1px solid #ccc" /></div>
     </div>
     <pre id="vision-result">(no scan yet)</pre>
 

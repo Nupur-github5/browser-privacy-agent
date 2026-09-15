@@ -59,10 +59,17 @@ async function ensureFaceModel() {
   await ensureTfBackend();
   faceModel = await blazeface.load({
     modelUrl: chrome.runtime.getURL("models/blazeface/model.json"),
-    // BlazeFace's own default (0.75) filters out real, clearly-visible faces
-    // in ordinary photos fairly often (measured ~0.66 confidence on a plain
-    // frontal studio portrait) — 0.5 is still well above noise-level scores.
-    scoreThreshold: 0.5,
+    // BlazeFace's default (0.75) misses real, clearly-visible faces often
+    // when run on a full-page screenshot rather than a tight face crop —
+    // measured 0.66 confidence on one portrait, 0.19 on the identical photo
+    // at a different in-page scale (the face occupies a smaller fraction of
+    // the 1280x720 frame BlazeFace resizes to 128x128, losing detail).
+    // For a privacy redaction feature the risk is asymmetric — a missed
+    // face leaks a real photo, a false positive just blurs empty
+    // background — so this deliberately trades precision for recall.
+    // Below ~0.1 the next-highest scores in testing were pure background
+    // noise, so this is the practical floor, not an arbitrary guess.
+    scoreThreshold: 0.15,
   });
   return faceModel;
 }
@@ -152,8 +159,92 @@ async function detectText(dataUrl) {
   const latencyMs = Math.round(performance.now() - t0);
 
   const regions = parseWordsFromTsv(data.tsv).filter((w) => w.text && w.text.trim() && w.confidence > 40);
+  const piiRegions = findPiiTextRegions(data.tsv);
 
-  return { regions, latencyMs, provider: "wasm" };
+  return { regions, piiRegions, latencyMs, provider: "wasm" };
+}
+
+// --- Visual redaction ------------------------------------------------------
+// Screenshots render whatever is on screen as pixels — a filled password
+// field or an Aadhaar number baked into an <img> is just as visible there as
+// in the DOM, and Phase 3's JSON tokenization does nothing to protect it.
+// This pass runs on the SAME canvas already holding the decoded screenshot
+// (from detectFaces' loadImageToCanvas call) and mutates it in place: blur
+// over face boxes, solid black over password fields and any OCR'd text that
+// matches a PII pattern. Only the resulting canvas may ever be treated as
+// "the screenshot" from here on.
+
+function pixelateRegion(ctx, x, y, w, h, blockSize = 10) {
+  x = Math.max(0, Math.round(x));
+  y = Math.max(0, Math.round(y));
+  w = Math.max(1, Math.round(w));
+  h = Math.max(1, Math.round(h));
+  const imageData = ctx.getImageData(x, y, w, h);
+  const tmp = document.createElement("canvas");
+  tmp.width = w;
+  tmp.height = h;
+  const tmpCtx = tmp.getContext("2d");
+  tmpCtx.putImageData(imageData, 0, 0);
+
+  const smallW = Math.max(1, Math.floor(w / blockSize));
+  const smallH = Math.max(1, Math.floor(h / blockSize));
+
+  const small = document.createElement("canvas");
+  small.width = smallW;
+  small.height = smallH;
+  const smallCtx = small.getContext("2d");
+  smallCtx.imageSmoothingEnabled = true;
+  smallCtx.drawImage(tmp, 0, 0, w, h, 0, 0, smallW, smallH);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(small, 0, 0, smallW, smallH, x, y, w, h);
+  ctx.imageSmoothingEnabled = true;
+}
+
+function blackoutRegion(ctx, x, y, w, h) {
+  ctx.fillStyle = "#000";
+  ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(w)), Math.max(1, Math.round(h)));
+}
+
+/** OCR words/lines whose text matches a known PII value pattern. */
+function findPiiTextRegions(tsv) {
+  if (!PVAPatterns) return [];
+  const words = parseWordsFromTsv(tsv);
+  const regions = [];
+  for (const w of words) {
+    if (PVAPatterns.matchValue(w.text)) regions.push(w.bbox);
+  }
+  // Also check whole lines (level 4) so space-separated formats (e.g. a
+  // formatted Aadhaar "2341 2341 2346") are caught even when no single word
+  // matches on its own.
+  for (const line of (tsv || "").split("\n")) {
+    const cols = line.split("\t");
+    if (cols.length < 12 || cols[0] !== "4") continue;
+    const [, , , , , , left, top, width, height, , ...textParts] = cols;
+    const text = textParts.join("\t");
+    if (PVAPatterns.matchValue(text)) {
+      regions.push({ x: parseInt(left, 10), y: parseInt(top, 10), width: parseInt(width, 10), height: parseInt(height, 10) });
+    }
+  }
+  return regions;
+}
+
+// Face bboxes get padded before blurring: at low confidence (see the
+// scoreThreshold comment above) BlazeFace's box is often loose or slightly
+// offset from the actual face, so blurring only the exact reported
+// rectangle risks leaving a sliver of face visible at the edge.
+function padBbox(b, marginFrac = 0.25) {
+  const mx = b.width * marginFrac;
+  const my = b.height * marginFrac;
+  return { x: b.x - mx, y: b.y - my, width: b.width + 2 * mx, height: b.height + 2 * my };
+}
+
+function redactCanvas(ctx, { faceBboxes = [], blackBboxes = [] }) {
+  for (const b of faceBboxes) {
+    const padded = padBbox(b);
+    pixelateRegion(ctx, padded.x, padded.y, padded.width, padded.height);
+  }
+  for (const b of blackBboxes) blackoutRegion(ctx, b.x, b.y, b.width, b.height);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -167,7 +258,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ? Promise.resolve({ regions: [], latencyMs: 0, provider: "skipped" })
           : detectText(message.imageDataUrl).catch((e) => ({ error: e.message, regions: [] })),
       ]);
-      sendResponse({ ok: true, face: faceResult, text: textResult });
+
+      let redactedImageDataUrl = null;
+      if (message.redact) {
+        // The canvas already holds the decoded screenshot from
+        // detectFaces() — reuse it instead of re-decoding.
+        const ctx = CANVAS.getContext("2d");
+        const passwordBboxes = message.passwordBboxes || [];
+        const piiTextBboxes = textResult.piiRegions || [];
+        redactCanvas(ctx, {
+          faceBboxes: (faceResult.faces || []).map((f) => f.bbox),
+          blackBboxes: [...passwordBboxes, ...piiTextBboxes],
+        });
+        redactedImageDataUrl = CANVAS.toDataURL("image/png");
+      }
+
+      sendResponse({ ok: true, face: faceResult, text: textResult, redactedImageDataUrl });
     } catch (e) {
       sendResponse({ ok: false, error: e.message });
     }

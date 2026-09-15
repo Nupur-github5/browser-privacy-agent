@@ -8,6 +8,8 @@ node_modules/
 .DS_Store
 eval/out/
 eval/network-payload.jsonl
+eval/redaction-before.png
+eval/redaction-after.png
 server/*.db
 
 # extension/models/ and extension/vendor/ ARE committed on purpose — they're

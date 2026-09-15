@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Redaction Test — Face, Password, PII-in-Image</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 16px auto; font-size: 13px; }
+      h2 { margin: 0 0 8px; }
+      h3 { margin: 10px 0 4px; font-size: 14px; }
+      .row { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+      .col { flex: 0 0 auto; }
+      img { display: block; border: 1px solid #ccc; }
+      p { font-size: 12px; color: #555; margin: 4px 0 10px; max-width: 700px; }
+      label { display: block; margin-top: 4px; font-weight: 600; }
+      input { padding: 4px 6px; margin-top: 2px; width: 200px; }
+    </style>
+  </head>
+  <body>
+    <h2>Redaction Test Page</h2>
+    <p>
+      A real face, a password field's contents, and PII rendered as pixels
+      inside an image (Aadhaar + email baked into the ID card, not
+      selectable HTML) — none of this may leave the browser unredacted.
+    </p>
+    <div class="row">
+      <div class="col">
+        <h3>Staff photo</h3>
+        <img id="portrait" src="assets/astronaut-portrait.jpg" width="300" alt="staff portrait" />
+      </div>
+      <div class="col">
+        <h3>Password field</h3>
+        <label for="pwd">Password</label>
+        <input id="pwd" type="password" value="Sup3rSecret!" />
+        <h3>ID card (Aadhaar + email rendered into a PNG)</h3>
+        <img id="idcard" src="assets/id-card.png" alt="id card" />
+      </div>
+    </div>
+  </body>
+</html>

@@ -48,14 +48,18 @@ document.getElementById("vision-scan-btn").addEventListener("click", async () =>
   await refreshActiveTab();
   if (activeTabId == null) return;
   const skipOcr = document.getElementById("skip-ocr").checked;
+  const redact = !document.getElementById("no-redact").checked;
   const resultEl = document.getElementById("vision-result");
   resultEl.textContent = "scanning...";
-  chrome.runtime.sendMessage({ type: "VISION_SCAN", tabId: activeTabId, skipOcr }, (response) => {
+  chrome.runtime.sendMessage({ type: "VISION_SCAN", tabId: activeTabId, skipOcr, redact }, (response) => {
     if (chrome.runtime.lastError) {
       resultEl.textContent = "error: " + chrome.runtime.lastError.message;
       return;
     }
-    resultEl.textContent = JSON.stringify(response, null, 2);
+    const { beforeImageDataUrl, redactedImageDataUrl, ...rest } = response || {};
+    document.getElementById("vision-before").src = beforeImageDataUrl || "";
+    document.getElementById("vision-after").src = redactedImageDataUrl || beforeImageDataUrl || "";
+    resultEl.textContent = JSON.stringify(rest, null, 2);
   });
 });
 
