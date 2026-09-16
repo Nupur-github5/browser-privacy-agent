@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Privacy Vision Agent</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 12px;
+        font-size: 13px;
+        color: #1a1a1a;
+        background: #fafafa;
+      }
+      h2 { font-size: 15px; margin: 0 0 10px; }
+      .tab-label { font-size: 11px; color: #666; margin-bottom: 10px; word-break: break-all; }
+      textarea {
+        width: 100%;
+        min-height: 56px;
+        padding: 8px;
+        font-family: inherit;
+        font-size: 13px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        resize: vertical;
+      }
+      .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+      button {
+        padding: 7px 14px;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #run-btn { background: #1a73e8; color: white; }
+      #run-btn:disabled { background: #a9c6f2; cursor: not-allowed; }
+      #stop-btn { background: #e8e8e8; color: #333; }
+      #stop-btn:disabled { color: #aaa; cursor: not-allowed; }
+      .status {
+        margin-left: auto;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .status.idle { color: #888; }
+      .status.running { color: #1a73e8; }
+      .status.done { color: #1a8c3e; }
+      .status.error { color: #c5221f; }
+      .status.stopped { color: #b06000; }
+      #log {
+        margin-top: 12px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        background: white;
+        height: 320px;
+        overflow-y: auto;
+        padding: 8px;
+      }
+      .log-line {
+        padding: 4px 6px;
+        border-bottom: 1px solid #f0f0f0;
+        line-height: 1.4;
+      }
+      .log-line:last-child { border-bottom: none; }
+      .log-line.action { color: #1a1a1a; }
+      .log-line.info { color: #666; font-style: italic; }
+      .log-line.error { color: #c5221f; }
+      .log-line.done { color: #1a8c3e; font-weight: 600; }
+      .log-line .icon { margin-right: 6px; }
+    </style>
+  </head>
+  <body>
+    <h2>Privacy Vision Agent</h2>
+    <div class="tab-label" id="tab-label">no active tab detected yet</div>
+
+    <textarea id="task-input" placeholder='e.g. "fill this form from my saved details and submit"'></textarea>
+    <div class="row">
+      <button id="run-btn">Run</button>
+      <button id="stop-btn" disabled>Stop</button>
+      <span class="status idle" id="status">idle</span>
+    </div>
+
+    <div id="log">
+      <div class="log-line info">Type an instruction above and click Run.</div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

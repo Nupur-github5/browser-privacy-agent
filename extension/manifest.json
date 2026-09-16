@@ -8,7 +8,8 @@
     "scripting",
     "storage",
     "tabs",
-    "offscreen"
+    "offscreen",
+    "sidePanel"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -17,9 +18,11 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Privacy Vision Agent"
+    "default_title": "Privacy Vision Agent — click to open the side panel"
   },
   "content_scripts": [
     {

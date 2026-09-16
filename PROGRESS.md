@@ -432,3 +432,56 @@ from this phase's changes (test-page/doc additions only, no `extension/` code to
 available, purely to capture a live end-to-end latency number and watch the full six-field
 autofill complete on camera — the mechanism it would be exercising is already proven correct by
 the phases that got there in smaller, independently-verified pieces.
+
+---
+
+# Post-Phase-7 additions
+
+Fresh Groq key installed (server/.env) — daily quota available again as of this session.
+
+## Feature 1 — Side panel front-end ✅
+
+- `extension/manifest.json`: added the `"sidePanel"` permission and a `"side_panel": {"default_path":
+  "sidepanel.html"}` entry. Removed `action.default_popup` (was `popup.html`) so clicking the
+  toolbar icon opens the side panel directly instead — `popup.html`/`popup.js` are now
+  unreferenced dead files (left in place; flagged as a cleanup candidate, not removed without
+  confirmation per the conservative-cleanup rule).
+- `extension/background.js`: registers `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick:
+  true })` at top level. **No new agent logic** — `runTask()` is the same function Phase 2 built,
+  extended in place with:
+  - A `taskControllers: Map<tabId, AbortController>` for cancellation. `STOP_TASK` looks up the
+    controller for a tabId and aborts it; `runTask()` checks `signal.aborted` between steps
+    (cooperative) and passes `AbortSignal.any([timeoutSignal, stopSignal])` into the `/agent/step`
+    fetch (immediate — cancels an in-flight request too, not just future ones).
+  - `broadcastStep(tabId, step)`: fire-and-forget `chrome.runtime.sendMessage({type:"TASK_STEP",...})`
+    after every executed action (and once for `done`), carrying the action plus the acted-on
+    element's `label` (looked up from that step's already-extracted `state.elements` — no extra
+    extraction call). No listener (e.g. panel closed) is not an error, just a no-op.
+  - `debug.html`/`debug.js` untouched — still works exactly as before; it simply doesn't listen
+    for `TASK_STEP`, so the broadcasts are silent no-ops from its perspective.
+- `extension/sidepanel.html` + `sidepanel.js` (new, alongside `debug.html` — not a replacement):
+  text box, Run/Stop buttons, live scrolling log. Finds "the current page" via
+  `chrome.tabs.query({active:true, currentWindow:true})` — **not** debug.js's
+  "first tab whose URL starts with http" heuristic, which was only ever a workaround for
+  `debug.html` itself having no notion of a "current" tab. A real side panel doesn't have that
+  problem: Chrome never lists the side panel itself in `chrome.tabs.query` results (it isn't a
+  tab), so the active-tab query is always unambiguous in actual usage — confirmed by a scratch
+  verification script that intentionally opened `sidepanel.html` as a plain tab (the only way to
+  exercise its JS without a real docked panel) and had to explicitly re-focus the form tab
+  first, since *that* setup artifact — not real side panel behaviour — was the only thing that
+  made tab identification ambiguous.
+  `describeStep()` turns each broadcast into one line ("Typed into \"Full Name\"", "Clicked
+  \"Submit\"", "Finished: ...") — no raw JSON, and deliberately never prints the value typed
+  (it's already a token by the time it reaches here, but there's no reason to surface it either).
+- **Verified live** (real Groq calls, scratch Playwright script, not committed): side panel loads
+  with zero page errors, live step lines appear during the run (not just at the end), the
+  employee-portal form fills and submits correctly, and a second run's Stop button correctly
+  halts mid-task (`status` → `stopped`).
+
+**How to test by hand:** load the extension, click its toolbar icon — the side panel opens on the
+right. Open any page with a form in a normal tab, type an instruction into the panel's text box,
+click Run. Watch the log fill in with one line per action as it happens; click Stop at any point
+to halt it early.
+
+**Next:** Feature 2 — visible/animated actions (demo mode): highlight the field being acted on,
+throttle steps so a human can follow along, character-by-character typing, a fast-mode toggle.

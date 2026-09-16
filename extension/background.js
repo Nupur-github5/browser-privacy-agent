@@ -9,6 +9,15 @@ chrome.runtime.onInstalled.addListener(() => {
   console.log("[privacy-vision-agent] installed");
 });
 
+// Clicking the toolbar icon opens the side panel (extension/sidepanel.html)
+// instead of a popup — the side panel is the primary front-end now.
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((e) => console.error("[privacy-vision-agent] sidePanel setup failed:", e));
+
+// One AbortController per in-flight task, keyed by tabId, so a side panel
+// "Stop" click can cancel a running runTask() loop — cooperative (checked
+// between steps) and immediate (aborts any in-flight fetch).
+const taskControllers = new Map();
+
 function sendToTab(tabId, payload) {
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(tabId, payload, (response) => {
@@ -80,61 +89,82 @@ async function runVisionScan(tabId, { skipOcr = false, redact = true } = {}) {
   });
 }
 
+function broadcastStep(tabId, step) {
+  // Fire-and-forget: no listener (e.g. side panel not open) just means this
+  // is a no-op, not an error.
+  chrome.runtime.sendMessage({ type: "TASK_STEP", tabId, step }).catch(() => {});
+}
+
 async function runTask(tabId, task, maxSteps = MAX_STEPS) {
   const history = [];
   const steps = [];
 
-  for (let i = 0; i < maxSteps; i++) {
-    const extractResp = await sendToTab(tabId, { type: "EXTRACT_STATE" });
-    if (!extractResp?.ok) {
-      return { ok: false, error: extractResp?.error || "EXTRACT_STATE failed", steps };
-    }
+  const stopController = new AbortController();
+  taskControllers.set(tabId, stopController);
 
-    const state = extractResp.state;
-    state.task = task;
-    state.available_tokens = state.available_tokens || [];
-    state.vision_regions = state.vision_regions || [];
+  try {
+    for (let i = 0; i < maxSteps; i++) {
+      if (stopController.signal.aborted) {
+        return { ok: true, stopped: true, steps };
+      }
 
-    let stepResp;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
-      let res;
+      const extractResp = await sendToTab(tabId, { type: "EXTRACT_STATE" });
+      if (!extractResp?.ok) {
+        return { ok: false, error: extractResp?.error || "EXTRACT_STATE failed", steps };
+      }
+
+      const state = extractResp.state;
+      state.task = task;
+      state.available_tokens = state.available_tokens || [];
+      state.vision_regions = state.vision_regions || [];
+
+      let stepResp;
       try {
-        res = await fetch(`${SERVER_BASE}/agent/step`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ state, history }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timeoutId);
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => timeoutController.abort(), 45000);
+        let res;
+        try {
+          res = await fetch(`${SERVER_BASE}/agent/step`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ state, history }),
+            signal: AbortSignal.any([timeoutController.signal, stopController.signal]),
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        if (!res.ok) {
+          const text = await res.text();
+          return { ok: false, error: `server ${res.status}: ${text}`, steps };
+        }
+        stepResp = await res.json();
+      } catch (e) {
+        if (stopController.signal.aborted) return { ok: true, stopped: true, steps };
+        const reason = e.name === "AbortError" ? "agent server request timed out after 45s" : `could not reach agent server: ${e.message}`;
+        return { ok: false, error: reason, steps };
       }
-      if (!res.ok) {
-        const text = await res.text();
-        return { ok: false, error: `server ${res.status}: ${text}`, steps };
+
+      const action = stepResp.action;
+      const targetLabel = action.target_id != null ? state.elements.find((e) => e.target_id === action.target_id)?.label : null;
+      steps.push({ state_id: state.state_id, action, repaired: stepResp.repaired, label: targetLabel });
+
+      if (action.action === "done") {
+        broadcastStep(tabId, { action, label: targetLabel });
+        return { ok: true, done: true, steps, reason: action.reason };
       }
-      stepResp = await res.json();
-    } catch (e) {
-      const reason = e.name === "AbortError" ? "agent server request timed out after 45s" : `could not reach agent server: ${e.message}`;
-      return { ok: false, error: reason, steps };
+
+      const execResp = await sendToTab(tabId, { type: "EXECUTE_ACTION", action });
+      broadcastStep(tabId, { action, label: targetLabel, success: execResp?.result?.success });
+      history.push({
+        action,
+        result: execResp?.result || { success: false, error: execResp?.error },
+      });
     }
 
-    const action = stepResp.action;
-    steps.push({ state_id: state.state_id, action, repaired: stepResp.repaired });
-
-    if (action.action === "done") {
-      return { ok: true, done: true, steps, reason: action.reason };
-    }
-
-    const execResp = await sendToTab(tabId, { type: "EXECUTE_ACTION", action });
-    history.push({
-      action,
-      result: execResp?.result || { success: false, error: execResp?.error },
-    });
+    return { ok: true, done: false, steps, reason: "max steps reached without done" };
+  } finally {
+    taskControllers.delete(tabId);
   }
-
-  return { ok: true, done: false, steps, reason: "max steps reached without done" };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -174,6 +204,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true; // async response
+  }
+
+  if (message?.type === "STOP_TASK" && message.tabId != null) {
+    const controller = taskControllers.get(message.tabId);
+    if (controller) controller.abort();
+    sendResponse({ ok: true, wasRunning: !!controller });
+    return true;
   }
 
   return false;
