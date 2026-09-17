@@ -483,5 +483,56 @@ right. Open any page with a form in a normal tab, type an instruction into the p
 click Run. Watch the log fill in with one line per action as it happens; click Stop at any point
 to halt it early.
 
-**Next:** Feature 2 — visible/animated actions (demo mode): highlight the field being acted on,
-throttle steps so a human can follow along, character-by-character typing, a fast-mode toggle.
+## Feature 2 — Visible/animated actions (demo mode) ✅
+
+- `extension/lib/executor.js`: `execute()`/`handleClick()`/`handleType()` now take an `options`
+  argument. When `options.demoMode` is true: the target element gets an inline-style highlight
+  (blue outline + glow, saved/restored so the page's own styling is never permanently touched)
+  before it's acted on; typing goes character-by-character (`CHAR_DELAY_MS` = 35ms/char, real
+  `keydown`/`keyup` events per character) instead of the instant bulk write; and each step is
+  paced by `stepDelayMs` (default 700, split ~40% before the action/60% after so the highlight
+  is visible before AND after the click/type). Submit is just another `click` action, so it gets
+  highlighted like any other target — no special-casing needed.
+  When `options` is omitted or `demoMode` is falsy — every pre-existing caller (`debug.html`) —
+  every function runs byte-for-byte the same as before this feature: same 30ms post-scroll
+  pause, same instant synchronous typing, no highlight, no extra delay.
+- `extension/content.js` / `extension/background.js`: `demoMode`/`stepDelayMs` thread through
+  unchanged from the `RUN_TASK` message → `runTask()` → each `EXECUTE_ACTION` message → the
+  executor call. Additive only — `debug.html`'s `RUN_TASK` calls don't include these fields, so
+  they arrive as `undefined` and the executor's defaults (`demoMode` falsy) take over, which is
+  exactly the pre-Feature-2 path.
+- `extension/sidepanel.html` / `sidepanel.js`: a "Demo mode" checkbox (checked by default) and a
+  step-delay slider (200–2000ms, default 700) shown only while demo mode is on. Unchecking demo
+  mode is the fast mode the spec calls for — it reverts to the original instant, unhighlighted
+  path (identical to what `debug.html` always did), rather than just a smaller delay number, so
+  "fast" actually means fast. Both controls are disabled while a task is running.
+- `tools/verify-feature2.mjs` (scratch, not part of the smoke-test suite — mirrors the existing
+  `tools/smoke-phase*.mjs` pattern but was written as a one-off check for this feature): drives
+  a real demo-mode run in the side panel and asserts (a) a highlighted field is actually observed
+  mid-run via computed `outline-style`/`outline-width`, (b) a field's value is caught mid-growth
+  (character-by-character, not instant), (c) no highlight lingers once the run finishes, and (d)
+  the form submits correctly. Also re-runs the exact `debug.html` flow from Phase 2/Feature 1
+  (no `demoMode` field sent at all) to confirm it's unaffected.
+
+**Verified (live, real Groq calls):**
+- `node tools/verify-feature2.mjs` — demo-mode section: **PASS**. Highlight observed during the
+  run, character-by-character growth observed on `#full-name`, no highlight left behind after
+  completion, form submitted correctly, side-panel log showed one line per action plus the
+  demo-mode-on notice.
+- The same script's `debug.html`-regression section timed out when run back-to-back immediately
+  after the demo-mode section (two full agent tasks' worth of Groq calls in one script, hitting
+  the same free-tier rate-limit flakiness already documented in Phase 2/4/6). Isolated re-run of
+  the identical `debug.html` flow on its own (fresh server, nothing preceding it) completed in
+  one clean pass: 9 steps, 0 repairs, correct token reuse (`[NAME_1]`/`[EMAIL_1]`/etc.), form
+  submitted with the real values. Confirms `debug.html` is unaffected by this feature — the
+  timeout was Groq quota contention from the test script, not a regression.
+- `node tools/smoke-phase1.mjs` → still PASS (no regression; `demoMode` isn't part of that path
+  at all).
+
+**How to test by hand:** load the extension, click its toolbar icon to open the side panel. Open
+a page with a form in a normal tab. "Demo mode" is checked by default with the delay slider set
+to 700ms — type a task into the panel and click Run: watch each field get a blue highlight
+before the agent types into it, watch the text appear letter-by-letter, and watch the Submit
+button get highlighted right before it's clicked. Drag the slider to change the pace (200ms =
+fast, 2000ms = slow) — it's disabled while a task is running. Uncheck "Demo mode" and run again:
+the form fills instantly with no highlighting, same as before this feature existed.

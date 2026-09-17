@@ -36,14 +36,14 @@ function extractState() {
   };
 }
 
-function executeAction(action) {
+function executeAction(action, options) {
   // Detokenize any [TOKEN_N] in the action's value locally, right before the
   // real DOM write — the resolved real value never travels back out.
   const resolvedAction = { ...action };
   if (typeof resolvedAction.value === "string" && currentVault) {
     resolvedAction.value = currentVault.detokenizeText(resolvedAction.value);
   }
-  return window.__PVA.execute(resolvedAction, currentRegistry);
+  return window.__PVA.execute(resolvedAction, currentRegistry, options);
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -66,7 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, error: "no active state — call EXTRACT_STATE first" });
       return true;
     }
-    executeAction(message.action)
+    executeAction(message.action, { demoMode: message.demoMode, stepDelayMs: message.stepDelayMs })
       .then((result) => sendResponse({ ok: true, result }))
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true; // async response

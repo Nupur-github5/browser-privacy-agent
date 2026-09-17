@@ -11,6 +11,19 @@ const stopBtn = document.getElementById("stop-btn");
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const tabLabelEl = document.getElementById("tab-label");
+const demoModeCheckbox = document.getElementById("demo-mode");
+const delayRow = document.getElementById("delay-row");
+const delaySlider = document.getElementById("delay-slider");
+const delayValueEl = document.getElementById("delay-value");
+
+function updateDelayRowVisibility() {
+  delayRow.style.display = demoModeCheckbox.checked ? "flex" : "none";
+}
+demoModeCheckbox.addEventListener("change", updateDelayRowVisibility);
+delaySlider.addEventListener("input", () => {
+  delayValueEl.textContent = `${delaySlider.value}ms`;
+});
+updateDelayRowVisibility();
 
 async function refreshActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -40,6 +53,8 @@ function setRunning(isRunning) {
   runBtn.disabled = isRunning;
   stopBtn.disabled = !isRunning;
   taskInput.disabled = isRunning;
+  demoModeCheckbox.disabled = isRunning;
+  delaySlider.disabled = isRunning;
 }
 
 // Turns one agent step into a short, human-readable sentence — no raw JSON,
@@ -74,13 +89,17 @@ runBtn.addEventListener("click", async () => {
     return;
   }
 
+  const demoMode = demoModeCheckbox.checked;
+  const stepDelayMs = Number(delaySlider.value);
+
   clearLog();
   setRunning(true);
   setStatus("running", "running");
   addLog(`Task: "${task}"`, "info");
   addLog(`Working on: ${activeTab.title || activeTab.url}`, "info");
+  if (demoMode) addLog(`Demo mode on — highlighting each field, ${stepDelayMs}ms per step.`, "info");
 
-  chrome.runtime.sendMessage({ type: "RUN_TASK", tabId: activeTab.id, task }, (response) => {
+  chrome.runtime.sendMessage({ type: "RUN_TASK", tabId: activeTab.id, task, demoMode, stepDelayMs }, (response) => {
     setRunning(false);
     if (chrome.runtime.lastError) {
       setStatus("error", "error");

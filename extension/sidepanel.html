@@ -67,6 +67,10 @@
       .log-line.error { color: #c5221f; }
       .log-line.done { color: #1a8c3e; font-weight: 600; }
       .log-line .icon { margin-right: 6px; }
+      .demo-row { font-size: 12px; color: #444; }
+      .demo-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+      .demo-row input[type="range"] { width: 110px; vertical-align: middle; }
+      #delay-value { font-variant-numeric: tabular-nums; color: #666; min-width: 44px; }
     </style>
   </head>
   <body>
@@ -74,6 +78,14 @@
     <div class="tab-label" id="tab-label">no active tab detected yet</div>
 
     <textarea id="task-input" placeholder='e.g. "fill this form from my saved details and submit"'></textarea>
+    <div class="row demo-row">
+      <label><input type="checkbox" id="demo-mode" checked /> Demo mode (highlight + slow down so you can watch)</label>
+    </div>
+    <div class="row demo-row" id="delay-row">
+      <label for="delay-slider">Step delay</label>
+      <input type="range" id="delay-slider" min="200" max="2000" step="100" value="700" />
+      <span id="delay-value">700ms</span>
+    </div>
     <div class="row">
       <button id="run-btn">Run</button>
       <button id="stop-btn" disabled>Stop</button>

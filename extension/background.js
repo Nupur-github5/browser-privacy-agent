@@ -95,7 +95,7 @@ function broadcastStep(tabId, step) {
   chrome.runtime.sendMessage({ type: "TASK_STEP", tabId, step }).catch(() => {});
 }
 
-async function runTask(tabId, task, maxSteps = MAX_STEPS) {
+async function runTask(tabId, task, maxSteps = MAX_STEPS, { demoMode = false, stepDelayMs } = {}) {
   const history = [];
   const steps = [];
 
@@ -153,7 +153,7 @@ async function runTask(tabId, task, maxSteps = MAX_STEPS) {
         return { ok: true, done: true, steps, reason: action.reason };
       }
 
-      const execResp = await sendToTab(tabId, { type: "EXECUTE_ACTION", action });
+      const execResp = await sendToTab(tabId, { type: "EXECUTE_ACTION", action, demoMode, stepDelayMs });
       broadcastStep(tabId, { action, label: targetLabel, success: execResp?.result?.success });
       history.push({
         action,
@@ -193,7 +193,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "RUN_TASK" && message.tabId != null) {
-    runTask(message.tabId, message.task, message.maxSteps)
+    runTask(message.tabId, message.task, message.maxSteps, { demoMode: message.demoMode, stepDelayMs: message.stepDelayMs })
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true; // async response
