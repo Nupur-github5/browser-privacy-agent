@@ -25,6 +25,135 @@ delaySlider.addEventListener("input", () => {
 });
 updateDelayRowVisibility();
 
+// --- Vault editor ---------------------------------------------------------
+// Reads/writes the SAME chrome.storage.local profile (extension/lib/
+// vault-profile.js) that content.js seeds tokens from on every extraction —
+// there is no separate "panel copy" of the vault, this just edits it.
+const vaultFixedFieldsEl = document.getElementById("vault-fixed-fields");
+const vaultCustomFieldsEl = document.getElementById("vault-custom-fields");
+const vaultAddFieldBtn = document.getElementById("vault-add-field");
+const vaultSaveBtn = document.getElementById("vault-save");
+const vaultResetBtn = document.getElementById("vault-reset");
+const vaultStatusEl = document.getElementById("vault-status");
+
+function renderFixedFields(profile) {
+  vaultFixedFieldsEl.innerHTML = "";
+  for (const def of window.__PVA.VAULT_FIELD_DEFS) {
+    const row = document.createElement("div");
+    row.className = "vault-field";
+    const label = document.createElement("label");
+    label.textContent = def.label;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.key = def.key;
+    input.value = profile[def.key] || "";
+    row.append(label, input);
+    vaultFixedFieldsEl.appendChild(row);
+  }
+}
+
+function addCustomRow(label = "", value = "") {
+  const row = document.createElement("div");
+  row.className = "vault-custom-row";
+  const labelInput = document.createElement("input");
+  labelInput.className = "custom-label";
+  labelInput.placeholder = "Field label";
+  labelInput.value = label;
+  const valueInput = document.createElement("input");
+  valueInput.className = "custom-value";
+  valueInput.placeholder = "Value";
+  valueInput.value = value;
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "remove-field";
+  removeBtn.textContent = "×";
+  removeBtn.title = "Remove this field";
+  removeBtn.addEventListener("click", () => row.remove());
+  row.append(labelInput, valueInput, removeBtn);
+  vaultCustomFieldsEl.appendChild(row);
+}
+
+function renderCustomFields(customList) {
+  vaultCustomFieldsEl.innerHTML = "";
+  for (const entry of customList) addCustomRow(entry.label, entry.value);
+}
+
+function readProfileFromUI() {
+  const profile = {};
+  vaultFixedFieldsEl.querySelectorAll("input").forEach((input) => {
+    profile[input.dataset.key] = input.value.trim();
+  });
+  profile.custom = Array.from(vaultCustomFieldsEl.querySelectorAll(".vault-custom-row"))
+    .map((row) => ({
+      label: row.querySelector(".custom-label").value.trim(),
+      value: row.querySelector(".custom-value").value.trim(),
+    }))
+    .filter((c) => c.label && c.value);
+  return profile;
+}
+
+async function loadVaultUI() {
+  const profile = await window.__PVA.getProfile();
+  renderFixedFields(profile);
+  renderCustomFields(profile.custom || []);
+}
+
+function flashVaultStatus(text) {
+  vaultStatusEl.textContent = text;
+  setTimeout(() => {
+    if (vaultStatusEl.textContent === text) vaultStatusEl.textContent = "";
+  }, 2500);
+}
+
+vaultAddFieldBtn.addEventListener("click", () => addCustomRow());
+
+vaultSaveBtn.addEventListener("click", async () => {
+  await window.__PVA.saveProfile(readProfileFromUI());
+  flashVaultStatus("Saved.");
+});
+
+vaultResetBtn.addEventListener("click", async () => {
+  await window.__PVA.saveProfile(window.__PVA.DEFAULT_PROFILE);
+  await loadVaultUI();
+  flashVaultStatus("Reset to default.");
+});
+
+loadVaultUI();
+
+// --- Privacy report ---------------------------------------------------------
+// Rendered ONLY from what a real run actually reported (background.js's
+// runTask() return value) — never hardcoded, never invented here.
+const privacyReportEl = document.getElementById("privacy-report");
+const privacyEntriesEl = document.getElementById("privacy-report-entries");
+const privacySummaryEl = document.getElementById("privacy-report-summary");
+
+function renderPrivacyReport(entries, leaksBlocked) {
+  if (!entries || entries.length === 0) {
+    privacyReportEl.style.display = "none";
+    return;
+  }
+  privacyEntriesEl.innerHTML = "";
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "privacy-entry";
+    const masked = document.createElement("span");
+    masked.className = "masked";
+    masked.textContent = entry.maskedHint;
+    const token = document.createElement("span");
+    token.className = "token";
+    token.textContent = entry.token;
+    const confirm = document.createElement("span");
+    confirm.className = "confirm";
+    confirm.textContent = "✅ not sent raw";
+    row.append(masked, token, confirm);
+    privacyEntriesEl.appendChild(row);
+  }
+  const leaked = leaksBlocked || 0;
+  privacySummaryEl.textContent = `${entries.length} sensitive value${entries.length === 1 ? "" : "s"} protected — ${leaked} sent in raw form this session.`;
+  privacySummaryEl.className = leaked > 0 ? "privacy-summary leak" : "privacy-summary";
+  privacyReportEl.style.display = "block";
+}
+
 async function refreshActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   activeTab = tab || null;
@@ -93,6 +222,7 @@ runBtn.addEventListener("click", async () => {
   const stepDelayMs = Number(delaySlider.value);
 
   clearLog();
+  privacyReportEl.style.display = "none";
   setRunning(true);
   setStatus("running", "running");
   addLog(`Task: "${task}"`, "info");
@@ -111,6 +241,7 @@ runBtn.addEventListener("click", async () => {
       addLog("No response from the agent.", "error");
       return;
     }
+    renderPrivacyReport(response.privacyReport, response.leaksBlocked);
     if (response.stopped) {
       setStatus("stopped", "stopped");
       addLog("Stopped by user.", "info");

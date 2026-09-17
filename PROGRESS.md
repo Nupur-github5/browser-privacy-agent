@@ -536,3 +536,129 @@ before the agent types into it, watch the text appear letter-by-letter, and watc
 button get highlighted right before it's clicked. Drag the slider to change the pace (200ms =
 fast, 2000ms = slow) — it's disabled while a task is running. Uncheck "Demo mode" and run again:
 the form fills instantly with no highlighting, same as before this feature existed.
+
+## Feature 3 — Vault + privacy report ✅
+
+**Part A — Vault.** Up to this point every PII value the agent ever typed had to already exist
+somewhere in the page's DOM (a "saved profile" card, a pre-filled field) — Phase 3's tokenizer
+only ever redacted values it found already sitting in extracted elements. There was no notion of
+the user's *own* details independent of any one page. Feature 3 adds that:
+
+- `extension/lib/vault-profile.js` (new): a `chrome.storage.local`-backed profile — full name,
+  email, phone, Aadhaar, PAN, address, plus a `custom: [{label, value}]` list. Seeded on first
+  use with the same fake "Priya Nair" identity `test-pages/demo.html` has used since Phase 7
+  (reused deliberately rather than inventing a second fake person — one safe-demo-data story for
+  the whole project, and the Aadhaar/PAN are already known-valid: Verhoeff checksum / correct
+  format). `getProfile()`/`saveProfile()` wrap `chrome.storage.local`; `profileToFields(profile)`
+  flattens it to `[{category, label, value}]`, where `category` matches
+  `pii-detector.js`'s existing category names (`NAME`, `EMAIL`, `AADHAAR`, ...) exactly, so a
+  vault-issued token reads identically to a DOM-discovered one. Custom fields get a category
+  slugified from their label (e.g. "Passport Number" → `PASSPORT_NUMBER`).
+  Written once, used in three different contexts unchanged: the content script, the side panel
+  (`<script>` include), and the background service worker (`importScripts`) — `self` is `window`
+  in the first two and the service worker's global scope in the third, so one file/one
+  `self.__PVA` namespace covers all three without duplicating the module per context.
+- `extension/content.js`: `extractState()` is now `async`. Before scanning the DOM, it loads the
+  vault profile and tokenizes every field into the current extraction's `Vault` — this is what
+  makes `[NAME_1]`/`[AADHAAR_1]`/etc. show up in `available_tokens` on every extraction, ready to
+  type into a completely blank field, not just fields that happen to echo a value already in the
+  page. Because `tokenize()` already dedups by `category::value`, this reuses (not duplicates)
+  the exact tokenizer Phase 3 built — no second PII path. `EXECUTE_ACTION`'s existing
+  `detokenizeText()` call needed no changes at all: it already resolves any `[TOKEN_N]` from
+  whatever's in the vault, regardless of whether that token came from the DOM or from the user's
+  saved profile.
+- `extension/lib/tokenizer.js`: `Vault.tokenize()` now takes an optional `label` (used for the
+  privacy report — see Part B), and gained `getReport()`, which returns
+  `[{token, label, maskedHint}]` for everything currently tokenized — masked, never raw (last 4
+  characters only, e.g. "Aadhaar Number ****2346"). Still one `Vault` class, one source of truth.
+- `extension/manifest.json`: `lib/vault-profile.js` added to the content script's `js` array
+  (next to `tokenizer.js`).
+- `extension/sidepanel.html`/`sidepanel.js`: a collapsed-by-default "🔐 My Vault" `<details>`
+  section — the 6 fixed fields as labelled inputs, a repeatable custom-field row (label + value +
+  remove button) with "+ Add custom field", and Save/Reset-to-default buttons. Reads/writes the
+  exact same `chrome.storage.local` profile `content.js` seeds tokens from — there is no separate
+  "panel copy," editing here changes what the agent will type next run.
+
+**Part B — Privacy report.** Needs to be built from what a run actually sent, not a canned
+example, and needs an active guarantee behind "0 sent in raw form," not just a claim:
+
+- `extension/content.js`: `extractState()`'s response now carries a second, separate top-level
+  field, `privacyReport` (the current vault's `getReport()`), alongside (never *inside*) `state`.
+  Keeping it outside `state` means it's structurally impossible for it to end up in the
+  `JSON.stringify({state, history})` body that gets POSTed to the server — masked hints are
+  UI-only, they never travel with the network payload even though they aren't raw PII either way.
+- `extension/background.js`: `runTask()` accumulates the union of `privacyReport` entries seen
+  across every extraction this run (converges after the first extraction, since vault fields are
+  seeded on every call) and returns it (`privacyReport`, `leaksBlocked`) from **every** exit path
+  — done, stopped, error, max-steps. Also added a real, active safeguard rather than a passive
+  claim: before each `/agent/step` POST, it fetches the real vault values locally
+  (`self.__PVA.getProfile()` — this never leaves the browser process) and checks whether any of
+  them appear as a substring of the exact outgoing request body. If one ever did, the request is
+  **not sent** — the step returns an error instead. `leaksBlocked` in the report is this check's
+  real running count (verified at 0 in every test run below), not an assumed constant.
+- `extension/sidepanel.html`/`sidepanel.js`: a "🔒 Privacy Report" panel, hidden until a run
+  finishes, rendered from `response.privacyReport`/`response.leaksBlocked` — the literal values
+  `runTask()` returned for that run, nothing hardcoded. One row per value: masked hint, the
+  token, "✅ not sent raw"; ending in a one-line summary, e.g. "6 sensitive values protected — 0
+  sent in raw form this session." Built with `createElement`/`textContent` throughout (not
+  `innerHTML`) since custom field labels are user-supplied text.
+
+**Part C — Realistic test page.** `test-pages/gov-portal.html` (new): a fictional "Department of
+Citizen Services" portal — tricolour bar, header with a placeholder circular emblem and a
+(decorative, non-functional) site-search box, a nav bar with real `<a href="#">` links (Home /
+Schemes / Downloads / Grievances / Contact Us — genuine clutter the agent must correctly ignore,
+not just visual noise), a sidebar with a "Latest Notices" list and an "Advertisement" box, and a
+footer with an explicit disclaimer that it's a local test fixture, not affiliated with any
+government body. The real "Aadhaar Detail Update" form (Full Name / Aadhaar Number / Address /
+Phone Number, all genuinely blank — nothing pre-filled anywhere on the page) sits directly in the
+main column, no navigation required to reach it. Submits and shows the result inline, same
+`#result` pattern as `demo.html`/`pii-review.html`.
+
+- `tools/verify-feature3.mjs` (new, scratch-style like `verify-feature2.mjs`): confirms the
+  gov-portal form starts genuinely blank, the vault editor shows the default seeded profile,
+  running "Fill in the Aadhaar Detail Update form using my saved details and submit it." fills
+  and submits the form with the REAL vault values despite the page clutter, zero raw vault values
+  appear in `eval/network-payload.jsonl` while the corresponding tokens do, the privacy report
+  renders with 6 entries all confirmed "not sent raw," the summary line matches the real count
+  exactly, and no masked hint ever contains a full raw value.
+
+**Verified (live, real Groq calls):**
+- `node tools/verify-feature3.mjs` → **PASS**: blank-form check, vault-editor-matches-default
+  check, 5-step agent run (name/aadhaar/address/phone + submit, one harmless redundant re-type
+  before recognizing completion — same benign pattern noted in earlier phases), form submitted
+  with real values, zero raw values / correct tokens in the logged payloads, all 6 report entries
+  present and correctly masked, summary text exactly `"6 sensitive values protected — 0 sent in
+  raw form this session."`.
+- `pytest server/tests -q` → 7 passed (unaffected — no server-side changes this feature).
+- `node tools/smoke-phase1.mjs` → still PASS (no regression).
+- `python eval/run.py --skip-llm` → all four client-side sections unchanged; vision provider
+  still reports `wasm` (WebGPU still opt-in only, per Phase 4's decision — untouched here).
+- `node tools/smoke-phase3.mjs` → still PASS, and a nice confirmation of the design working as
+  intended: `pii-review.html`'s pre-filled "Asha Verma" values now get `[NAME_2]`/`[EMAIL_2]`/etc.
+  (`[NAME_1]`/`[EMAIL_1]`/etc. go to the vault's own "Priya Nair" fields, tokenized first on every
+  extraction) — vault-seeded and DOM-discovered PII coexist through the one tokenizer with no
+  collisions or drift.
+- `node tools/demo.mjs` → still PASS: `demo.html`'s "saved profile" card uses the exact same fake
+  identity as the new vault default, so its 6 values dedup onto the same `[NAME_1]`.../`[ADDRESS_1]`
+  tokens the vault would have issued anyway — 12 steps (up from ~9 previously — the model does a
+  little more copying between the two now-identical-looking sources, still harmless), all 6
+  values correct in the submitted form, zero raw PII in the privacy proof log.
+
+**How to test by hand:**
+1. Reload the extension in `chrome://extensions` (code changed).
+2. Click the toolbar icon to open the side panel. Click "🔐 My Vault" to expand it — you should
+   see Full Name, Email, Phone Number, Aadhaar Number, PAN, and Address already filled in with
+   fake demo data (Priya Nair / a fake Aadhaar & PAN / a fake address). Edit any field, or click
+   "+ Add custom field" and type in your own label/value, then click "Save Vault" — a "Saved."
+   confirmation appears briefly.
+3. Serve the new test page: `cd test-pages && python3 -m http.server 8080`, then open
+   `http://localhost:8080/gov-portal.html` in a normal tab. You'll see a cluttered
+   government-portal-style page (banner, nav links, notices sidebar, an ad box) with an "Aadhaar
+   Detail Update" form in the middle — all four fields empty.
+4. In the side panel, type: "Fill in the Aadhaar Detail Update form using my saved details and
+   submit it." and click Run.
+5. Watch the form fill in with your vault's values (not whatever's in the page — there's nothing
+   pre-filled there) and submit, despite the surrounding clutter.
+6. Below the log, a "🔒 Privacy Report" appears: one line per protected value (e.g. "Aadhaar
+   Number ****2346 — [AADHAAR_1] — ✅ not sent raw"), ending in a summary like "6 sensitive
+   values protected — 0 sent in raw form this session."

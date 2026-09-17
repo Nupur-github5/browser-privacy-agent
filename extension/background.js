@@ -1,6 +1,13 @@
 // Background service worker: message relay, per-tab state cache, and the
 // client-driven agent loop (extract -> ask server -> execute -> repeat).
 
+// Classic (non-module) service worker, so importScripts works. vault-profile.js
+// attaches to `self.__PVA` (see its own comment on why `self` is the right
+// root in every context it runs in) — reused here rather than duplicated so
+// the vault has exactly one implementation across content script/side
+// panel/background.
+importScripts("lib/vault-profile.js");
+
 const tabStateCache = new Map();
 const SERVER_BASE = "http://127.0.0.1:8000";
 const MAX_STEPS = 25;
@@ -98,25 +105,62 @@ function broadcastStep(tabId, step) {
 async function runTask(tabId, task, maxSteps = MAX_STEPS, { demoMode = false, stepDelayMs } = {}) {
   const history = [];
   const steps = [];
+  const privacyReportMap = new Map(); // token -> {token, label, maskedHint}
+  let leaksBlocked = 0;
 
   const stopController = new AbortController();
   taskControllers.set(tabId, stopController);
 
+  // Real vault values, read once per task purely to VERIFY — locally, never
+  // sent anywhere — that no outgoing payload this run ever contains one of
+  // them raw. This is what makes "0 sent in raw form" in the privacy report
+  // an actively-checked fact instead of an assumed one.
+  let rawVaultValues = [];
+  try {
+    const profile = await self.__PVA.getProfile();
+    rawVaultValues = self.__PVA
+      .profileToFields(profile)
+      .map((f) => f.value)
+      .filter(Boolean);
+  } catch (_) {
+    rawVaultValues = [];
+  }
+
+  function mergeReport(entries) {
+    for (const entry of entries || []) privacyReportMap.set(entry.token, entry);
+  }
+  function reportFields() {
+    return { privacyReport: Array.from(privacyReportMap.values()), leaksBlocked };
+  }
+
   try {
     for (let i = 0; i < maxSteps; i++) {
       if (stopController.signal.aborted) {
-        return { ok: true, stopped: true, steps };
+        return { ok: true, stopped: true, steps, ...reportFields() };
       }
 
       const extractResp = await sendToTab(tabId, { type: "EXTRACT_STATE" });
       if (!extractResp?.ok) {
-        return { ok: false, error: extractResp?.error || "EXTRACT_STATE failed", steps };
+        return { ok: false, error: extractResp?.error || "EXTRACT_STATE failed", steps, ...reportFields() };
       }
+      mergeReport(extractResp.privacyReport);
 
       const state = extractResp.state;
       state.task = task;
       state.available_tokens = state.available_tokens || [];
       state.vision_regions = state.vision_regions || [];
+
+      const outgoingBody = JSON.stringify({ state, history });
+      const leaked = rawVaultValues.filter((v) => outgoingBody.includes(v));
+      if (leaked.length > 0) {
+        leaksBlocked += leaked.length;
+        return {
+          ok: false,
+          error: "privacy check failed: raw vault value(s) found in outgoing payload — request blocked before sending",
+          steps,
+          ...reportFields(),
+        };
+      }
 
       let stepResp;
       try {
@@ -127,7 +171,7 @@ async function runTask(tabId, task, maxSteps = MAX_STEPS, { demoMode = false, st
           res = await fetch(`${SERVER_BASE}/agent/step`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ state, history }),
+            body: outgoingBody,
             signal: AbortSignal.any([timeoutController.signal, stopController.signal]),
           });
         } finally {
@@ -135,13 +179,13 @@ async function runTask(tabId, task, maxSteps = MAX_STEPS, { demoMode = false, st
         }
         if (!res.ok) {
           const text = await res.text();
-          return { ok: false, error: `server ${res.status}: ${text}`, steps };
+          return { ok: false, error: `server ${res.status}: ${text}`, steps, ...reportFields() };
         }
         stepResp = await res.json();
       } catch (e) {
-        if (stopController.signal.aborted) return { ok: true, stopped: true, steps };
+        if (stopController.signal.aborted) return { ok: true, stopped: true, steps, ...reportFields() };
         const reason = e.name === "AbortError" ? "agent server request timed out after 45s" : `could not reach agent server: ${e.message}`;
-        return { ok: false, error: reason, steps };
+        return { ok: false, error: reason, steps, ...reportFields() };
       }
 
       const action = stepResp.action;
@@ -150,7 +194,7 @@ async function runTask(tabId, task, maxSteps = MAX_STEPS, { demoMode = false, st
 
       if (action.action === "done") {
         broadcastStep(tabId, { action, label: targetLabel });
-        return { ok: true, done: true, steps, reason: action.reason };
+        return { ok: true, done: true, steps, reason: action.reason, ...reportFields() };
       }
 
       const execResp = await sendToTab(tabId, { type: "EXECUTE_ACTION", action, demoMode, stepDelayMs });
@@ -161,7 +205,7 @@ async function runTask(tabId, task, maxSteps = MAX_STEPS, { demoMode = false, st
       });
     }
 
-    return { ok: true, done: false, steps, reason: "max steps reached without done" };
+    return { ok: true, done: false, steps, reason: "max steps reached without done", ...reportFields() };
   } finally {
     taskControllers.delete(tabId);
   }

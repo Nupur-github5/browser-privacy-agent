@@ -34,6 +34,7 @@
         "lib/pii-patterns.js",
         "lib/pii-detector.js",
         "lib/tokenizer.js",
+        "lib/vault-profile.js",
         "lib/dom-extractor.js",
         "lib/executor.js",
         "content.js"

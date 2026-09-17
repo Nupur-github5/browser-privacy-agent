@@ -13,26 +13,42 @@ console.log("[privacy-vision-agent] content script loaded on", location.href);
 let currentRegistry = null;
 let currentVault = null;
 
-function extractState() {
+async function extractState() {
   currentRegistry = window.__PVA.createRegistry();
   currentVault = window.__PVA.createVault();
+
+  // Seed the vault from the user's saved profile FIRST, so its fields become
+  // the canonical [CATEGORY_1] tokens — available to type into ANY blank
+  // field, not just ones that happen to already hold a matching raw value
+  // in the page's own DOM (Feature 3). Tokenizing here doesn't depend on
+  // any element existing yet; if the same value also shows up in the DOM
+  // scan below, tokenize()'s existing value-dedup reuses the same token.
+  const profile = await window.__PVA.getProfile();
+  for (const field of window.__PVA.profileToFields(profile)) {
+    currentVault.tokenize(field.category, field.value, field.label);
+  }
 
   const rawElements = window.__PVA.extractElements(document.body, currentRegistry);
   const elements = rawElements.map((el) => {
     const classification = window.PVADetector.classifyElement(el);
     if (classification.isPII && typeof el.value === "string" && el.value.trim()) {
-      const token = currentVault.tokenize(classification.category, el.value);
+      const token = currentVault.tokenize(classification.category, el.value, el.label);
       return { ...el, value: token };
     }
     return el;
   });
 
   return {
-    state_id: currentRegistry.stateId,
-    url: location.href,
-    title: document.title,
-    elements,
-    available_tokens: currentVault.listTokens(),
+    state: {
+      state_id: currentRegistry.stateId,
+      url: location.href,
+      title: document.title,
+      elements,
+      available_tokens: currentVault.listTokens(),
+    },
+    // Masked-only summary of everything currently tokenized — never sent to
+    // the server, only ever relayed to the side panel's privacy report.
+    privacyReport: currentVault.getReport(),
   };
 }
 
@@ -53,11 +69,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "EXTRACT_STATE") {
-    try {
-      sendResponse({ ok: true, state: extractState() });
-    } catch (e) {
-      sendResponse({ ok: false, error: e.message });
-    }
+    extractState()
+      .then(({ state, privacyReport }) => sendResponse({ ok: true, state, privacyReport }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
   }
 

@@ -71,6 +71,32 @@
       .demo-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
       .demo-row input[type="range"] { width: 110px; vertical-align: middle; }
       #delay-value { font-variant-numeric: tabular-nums; color: #666; min-width: 44px; }
+
+      details#vault-details { margin-top: 10px; border: 1px solid #ddd; border-radius: 6px; background: white; }
+      details#vault-details summary { padding: 8px 10px; cursor: pointer; font-weight: 600; font-size: 13px; }
+      .vault-body { padding: 2px 10px 10px; }
+      .vault-note { font-size: 11px; color: #666; margin: 0 0 8px; line-height: 1.4; }
+      .vault-note code { background: #eef2fb; padding: 1px 4px; border-radius: 3px; }
+      .vault-field { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+      .vault-field label { width: 92px; flex-shrink: 0; font-size: 12px; font-weight: 600; }
+      .vault-field input, .vault-custom-row input { flex: 1; padding: 5px 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; font-family: inherit; }
+      .vault-custom-row { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
+      .vault-custom-row input.custom-label { width: 92px; flex-shrink: 0; }
+      .vault-custom-row button.remove-field { background: #f5d6d6; color: #8a1f1f; padding: 4px 8px; font-size: 13px; flex-shrink: 0; }
+      #vault-add-field { background: #e8e8e8; color: #333; font-size: 12px; }
+      #vault-save { background: #1a73e8; color: white; }
+      #vault-reset { background: #e8e8e8; color: #333; }
+      #vault-status { font-size: 11px; color: #1a8c3e; }
+
+      .privacy-report { margin-top: 12px; border: 1px solid #cfe3cf; border-radius: 6px; background: #f4fbf4; padding: 10px; }
+      .privacy-report h3 { margin: 0 0 6px; font-size: 13px; color: #1a5c2a; }
+      .privacy-entry { font-size: 11.5px; padding: 4px 0; border-bottom: 1px solid #e2efe2; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+      .privacy-entry:last-child { border-bottom: none; }
+      .privacy-entry .masked { color: #333; }
+      .privacy-entry .token { color: #1a73e8; font-family: monospace; }
+      .privacy-entry .confirm { color: #1a8c3e; white-space: nowrap; }
+      .privacy-summary { margin-top: 8px; font-size: 12px; font-weight: 600; color: #1a5c2a; }
+      .privacy-summary.leak { color: #c5221f; }
     </style>
   </head>
   <body>
@@ -92,10 +118,38 @@
       <span class="status idle" id="status">idle</span>
     </div>
 
+    <details id="vault-details">
+      <summary>🔐 My Vault (saved details the agent fills forms with)</summary>
+      <div class="vault-body">
+        <p class="vault-note">
+          Seeded with safe, fake demo data — never a real person's details.
+          Edit any field below. Nothing here is ever sent to the server; the
+          agent only ever sends tokens like <code>[NAME_1]</code>.
+        </p>
+        <div class="vault-fields" id="vault-fixed-fields"></div>
+        <div class="vault-custom" id="vault-custom-fields"></div>
+        <div class="row">
+          <button id="vault-add-field" type="button">+ Add custom field</button>
+        </div>
+        <div class="row">
+          <button id="vault-save" type="button">Save Vault</button>
+          <button id="vault-reset" type="button">Reset to Default</button>
+          <span id="vault-status"></span>
+        </div>
+      </div>
+    </details>
+
     <div id="log">
       <div class="log-line info">Type an instruction above and click Run.</div>
     </div>
 
+    <div id="privacy-report" class="privacy-report" style="display: none">
+      <h3>🔒 Privacy Report</h3>
+      <div id="privacy-report-entries"></div>
+      <div id="privacy-report-summary" class="privacy-summary"></div>
+    </div>
+
+    <script src="lib/vault-profile.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>
